@@ -81,11 +81,11 @@ npm run db:restore -- backups/2026-10-12.sqlite
 npm run typecheck
 npm run check
 npm test
-# 另一个终端先启动应用，浏览器测试会创建真实测试账号
+# 脚本自动在3100端口启动独立测试服务，无需手动先启动应用
 CHROMIUM_PATH=/usr/bin/chromium npm run test:browser
 ```
 
-浏览器测试使用Playwright及已安装的Chromium。在其他机器可安装Chromium，或将CHROMIUM_PATH设为浏览器路径。建议浏览器测试启动独立数据库，例如 `DATABASE_PATH=/tmp/thought-browser.sqlite APP_ORIGIN=http://localhost:3000 npm run dev`。测试会创建内容和账号，不应针对正式数据运行。
+浏览器测试使用Playwright及已安装的Chromium。在其他机器可安装Chromium，或将CHROMIUM_PATH设为浏览器路径。浏览器测试由 `scripts/test-server.mjs` 自动创建临时SQLite数据库，使用独立 `.next-ui` 构建目录，并在3100端口启动服务。测试服务显式禁用AI密钥，不使用正式账号或运行数据库。测试结束后自动停止服务。可用 `PLAYWRIGHT_BASE_URL=http://localhost:3200` 改变测试端口。测试构建目录不纳入Git提交。
 
 实际验证结果见 `docs/VALIDATION.md`；需求对应见 `REQUIREMENTS.md`。P1/P2没有伪装按钮。首版采用可读SVG图、表单字段、人工排序数字与简洁列表，未做复杂无限画布、分享、附件、语义搜索和外部通知。
 
@@ -101,3 +101,32 @@ CHROMIUM_PATH=/usr/bin/chromium npm run test:browser
 - 恢复失败：确认来源文件和版本，先停止应用，保留原文件与恢复前备份。
 
 日志只记录类别、状态、耗时，不记录私人正文、密码或密钥。默认用户无管理权限，管理统计API只接受数据库中已由运营者设置的admin角色，注册不能赋权。
+
+## 界面优化与更新
+
+首页只显示快速记录、最近三个未归档主题和最多五项今日关注，收集箱通过简短入口访问。主题内容分为原始想法、思路整理、问题与行动、证据与验证、判断与复盘五个主标签；仍以原对象类型保存上次位置，不需要迁移数据。
+
+默认列表只显示摘要、状态和必要日期，点击内容可看完整详情。“更多”保留编辑、置顶、关注、拆分、归档、历史和删除；“选择内容”开启复选框、AI范围和合并操作。编辑表单采用基础信息与补充区域，隐藏或切换类型的字段保留原值。关联内容可按标题搜索、点击选择并通过标签移除，不需要Ctrl多选。
+
+AI助手从主题右上角按需打开。没有密钥时显示“AI尚未配置”，手动功能不受影响。所有建议依旧需要预览并保存；历史显示可读字段，原始JSON放在高级查看入口。设置显示真实今日、月度调用数，并另外说明原有滚动24小时/30天额度。
+
+新版界面的源码位于 GitHub 的 `work` 分支。此前仅上传 ZIP 的提交 `8640497` 不包含源码更新；请拉取后续的界面源码提交。若有自己的代码改动，先提交或妥善保存，再更新分支：
+
+```bash
+git switch work
+git pull --ff-only origin work
+cd thought-organizer
+```
+
+已有安装更新时保留自己的 `.env`、`.env.local` 和数据库；停止自己启动的旧服务，在工程目录执行：
+
+```bash
+npm ci
+npm run typecheck
+npm run check
+npm test
+npm run build
+npm run start
+```
+
+开发时使用 `npm run dev`。生产环境的 `npm run start` 使用已经生成的构建，请在拉取源码后重新执行 `npm run build` 并重启服务，最后刷新浏览器。登录后的新版首页应显示“快速记录”“继续整理”“今日关注”，主题内应有五个主标签。本次没有更改数据库结构，不需要重新创建账号或清空数据；密钥继续由服务端环境变量读取。新增的唯一运行依赖是固定版本的 `@radix-ui/react-icons`。此次修改和验证记录见 `docs/UI-UPDATE.md`。

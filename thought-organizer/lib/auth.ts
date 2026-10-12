@@ -6,7 +6,7 @@ import {
   createHash,
 } from "node:crypto";
 import { all, one, run, transaction } from "./db";
-import { fail } from "./schema";
+import { fail, dateInZone } from "./schema";
 export type User = {
   id: string;
   email: string;
@@ -141,7 +141,17 @@ export function removeAccount(user: User, password: string) {
     run("DELETE FROM users WHERE id=?", user.id);
   });
 }
-export function usage(owner: string) {
+export function usage(owner: string, timezone = "Asia/Shanghai") {
+  const now = Date.now(),
+    today = dateInZone(new Date(now), timezone);
+  const rows = all<{ created_at: number }>(
+    "SELECT created_at FROM calls WHERE owner=? AND created_at>=?",
+    owner,
+    now - 40 * 86400000,
+  );
+  const days = rows.map((row) =>
+    dateInZone(new Date(row.created_at), timezone),
+  );
   return {
     calls: all(
       "SELECT state,count(*) count,sum(tokens) tokens,avg(ended_at-created_at) duration FROM calls WHERE owner=? GROUP BY state",
@@ -151,6 +161,12 @@ export function usage(owner: string) {
       "SELECT event,count(*) count FROM metrics WHERE owner=? GROUP BY event",
       owner,
     ),
+    todayUsed: days.filter((day) => day === today).length,
+    monthUsed: days.filter((day) => day.startsWith(today.slice(0, 7))).length,
+    rollingDayUsed: rows.filter((row) => row.created_at > now - 86400000)
+      .length,
+    rollingMonthUsed: rows.filter((row) => row.created_at > now - 30 * 86400000)
+      .length,
     dailyLimit: Number(process.env.AI_DAILY_LIMIT || 20),
     monthlyLimit: Number(process.env.AI_MONTHLY_LIMIT || 100),
   };

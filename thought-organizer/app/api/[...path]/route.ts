@@ -110,7 +110,10 @@ async function handle(
           ...JSON.parse(user.settings),
         },
         aiConfigured: configured(),
-        usage: usage(user.id),
+        usage: usage(
+          user.id,
+          JSON.parse(user.settings).timezone || "Asia/Shanghai",
+        ),
       });
     if (route === "settings" && req.method === "PATCH") {
       const settings = z

@@ -14,6 +14,30 @@ const auth = await import("../lib/auth");
 const ai = await import("../lib/ai");
 const { db, run, one } = await import("../lib/db");
 const { cycleWarnings, dateInZone } = await import("../lib/schema");
+test("AI用量按账号时区统计今日与月度，同时保留滚动额度", (t) => {
+  t.mock.timers.enable({
+    apis: ["Date"],
+    now: new Date("2026-10-01T01:00:00Z"),
+  });
+  const id = user();
+  for (const [timestamp, state] of [
+    ["2026-09-30T17:00:00Z", "success"],
+    ["2026-09-29T17:00:00Z", "error"],
+    ["2026-10-01T00:00:00Z", "success"],
+  ])
+    run(
+      "INSERT INTO calls(id,owner,state,created_at) VALUES(?,?,?,?)",
+      randomUUID(),
+      id,
+      state,
+      Date.parse(timestamp),
+    );
+  const usage = auth.usage(id, "Asia/Shanghai");
+  assert.equal(usage.todayUsed, 2);
+  assert.equal(usage.monthUsed, 2);
+  assert.equal(usage.rollingDayUsed, 2);
+  assert.equal(usage.rollingMonthUsed, 3);
+});
 function user() {
   const id = randomUUID();
   run(

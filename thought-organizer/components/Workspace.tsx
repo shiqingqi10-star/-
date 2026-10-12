@@ -1,41 +1,52 @@
 "use client";
-import { useCallback, useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  HomeIcon,
+  ArchiveIcon,
+  ReaderIcon,
+  QuestionMarkCircledIcon,
+  CalendarIcon,
+  MagnifyingGlassIcon,
+  GearIcon,
+  TrashIcon,
+  PlusIcon,
+  HamburgerMenuIcon,
+  LightningBoltIcon,
+  ExitIcon,
+  ReloadIcon,
+  ArrowLeftIcon,
+  ChevronRightIcon,
+  LayersIcon,
+} from "@radix-ui/react-icons";
 import {
   Entity,
   Kind,
-  titles,
-  dateInZone,
-  states,
+  kinds,
   fields,
-  referenceFields,
+  states,
+  dateInZone,
   selectScope,
 } from "@/lib/schema";
+import {
+  entityName,
+  kindLabels,
+  topicSections,
+  sectionFor,
+  rememberedKind,
+  recentTopics,
+  focusItems,
+  matchesDate,
+  finished,
+  readableTime,
+} from "@/lib/presentation";
 import Editor, { EditRequest } from "./Editor";
 import Graph from "./Graph";
-type User = {
-  id: string;
-  email: string;
-  role: string;
-  settings: { timezone: string; reminders: boolean };
-  aiConfigured: boolean;
-  usage: unknown;
-};
-type Suggestion = {
-  id: string;
-  kind: string;
-  data: Record<string, unknown>;
-  status: string;
-  target: string | null;
-  feedback: string;
-};
-type Analysis = {
-  id: string;
-  created_at: string;
-  stale: boolean;
-  snapshot: Entity[];
-  result: { understanding: string; clarifications: string[] };
-  suggestions: Suggestion[];
-};
+import EntityList from "./EntityList";
+import EntityDetail, { RecordFields } from "./EntityDetail";
+import AIAssistant, { Analysis, Suggestion } from "./AIAssistant";
+import Modal from "./ui/Modal";
+import Menu, { MenuAction } from "./ui/Menu";
+import Settings, { User } from "./Settings";
 async function api<T = unknown>(
   path: string,
   method = "GET",
@@ -43,24 +54,20 @@ async function api<T = unknown>(
 ): Promise<T> {
   const r = await fetch("/api/" + path, {
     method,
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
+    headers:
+      body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await r.json();
-  if (!r.ok) throw new Error(data.error || "请求失败");
+  if (!r.ok) throw new Error(data.error || "请求失败，请稍后重试。");
   return data;
 }
-const name = (e: Entity) =>
-  String(e.data.title || e.data.content || titles[e.kind]);
 const nav = [
-  "首页",
-  "收集箱",
-  "主题",
-  "待思考",
-  "待办与事件",
-  "搜索",
-  "设置",
-  "回收站",
+  { name: "首页", icon: HomeIcon },
+  { name: "收集箱", icon: ArchiveIcon },
+  { name: "我的主题", icon: ReaderIcon },
+  { name: "待思考", icon: QuestionMarkCircledIcon },
+  { name: "待办与事件", icon: CalendarIcon },
 ];
 export default function Workspace() {
   const [user, setUser] = useState<User | null>(null),
@@ -68,20 +75,25 @@ export default function Workspace() {
     [items, setItems] = useState<Entity[]>([]),
     [page, setPage] = useState("首页"),
     [topic, setTopic] = useState<string | null>(null),
-    [tab, setTab] = useState("card"),
+    [tab, setTab] = useState<Kind>("card"),
     [graph, setGraph] = useState(false),
     [edit, setEdit] = useState<EditRequest | null>(null),
+    [detail, setDetail] = useState<Entity | null>(null),
     [notice, setNotice] = useState(""),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [search, setSearch] = useState(""),
     [filter, setFilter] = useState("全部"),
     [statusFilter, setStatusFilter] = useState("全部"),
+    [typeFilter, setTypeFilter] = useState("全部"),
+    [showArchived, setShowArchived] = useState(false),
     [selected, setSelected] = useState<string[]>([]),
+    [selecting, setSelecting] = useState(false),
     [analyses, setAnalyses] = useState<Analysis[]>([]),
-    [mode, setMode] = useState("整理思路"),
-    [answers, setAnswers] = useState(""),
+    [aiOpen, setAiOpen] = useState(false),
+    [guide, setGuide] = useState(false),
     [quick, setQuick] = useState(""),
+    [mobileNav, setMobileNav] = useState(false),
     [history, setHistory] = useState<{
       entity: Entity;
       versions: { version: number; snapshot: Entity; created_at: string }[];
@@ -90,8 +102,15 @@ export default function Workspace() {
     [splitText, setSplitText] = useState(""),
     [email, setEmail] = useState(""),
     [password, setPassword] = useState(""),
-    [register, setRegister] = useState(false);
-  const topicRef = useRef<string | null>(null);
+    [register, setRegister] = useState(false),
+    [feedback, setFeedback] = useState<{
+      analysisId: string | null;
+      suggestionId?: string;
+      rating: string;
+      comment: string;
+    } | null>(null);
+  const topicRef = useRef<string | null>(null),
+    quickRef = useRef("");
   useEffect(() => {
     topicRef.current = topic;
   }, [topic]);
@@ -102,9 +121,6 @@ export default function Workspace() {
     ]);
     setUser(u);
     setItems(rows);
-    try {
-      setQuick(localStorage.getItem("thought-draft:" + u.id + ":quick") || "");
-    } catch {}
   }, []);
   useEffect(() => {
     void Promise.all([api<User>("me"), api<Entity[]>("entities?trash=1")])
@@ -112,29 +128,40 @@ export default function Workspace() {
         setUser(u);
         setItems(rows);
         try {
-          setQuick(
-            localStorage.getItem("thought-draft:" + u.id + ":quick") || "",
-          );
+          const value =
+            localStorage.getItem("thought-draft:" + u.id + ":quick") || "";
+          setQuick(value);
+          quickRef.current = value;
         } catch {}
       })
       .catch(() => setUser(null))
       .finally(() => setLoading(false));
   }, []);
   useEffect(() => {
-    if (!user) return;
+    if (!user || !topic) return;
     let current = true;
-    api<Analysis[]>("analyses?" + (topic ? "topic=" + topic : ""))
-      .then((x) => {
-        if (current) setAnalyses(x);
+    api<Analysis[]>("analyses?topic=" + topic)
+      .then((rows) => {
+        if (current) setAnalyses(rows);
       })
-      .catch(() => {});
+      .catch((e) => {
+        if (current) setError(e.message);
+      });
     return () => {
       current = false;
     };
   }, [topic, user]);
-  const alive = items.filter((x) => !x.deletedAt),
-    today = dateInZone(new Date(), user?.settings.timezone || "Asia/Shanghai");
-  async function work(fn: () => Promise<unknown>, message = "保存成功") {
+  const alive = items.filter((e) => !e.deletedAt),
+    zone = user?.settings.timezone || "Asia/Shanghai",
+    today = dateInZone(new Date(), zone),
+    t = alive.find((e) => e.id === topic),
+    scoped = alive.filter((e) => e.topic === topic),
+    selectedScoped = selected.filter((id) => scoped.some((e) => e.id === id));
+  const inputScope =
+    topic && t
+      ? selectScope(alive, topic, selecting ? selectedScoped : [])
+      : [];
+  async function work(fn: () => Promise<unknown>, message = "已保存") {
     setBusy(true);
     setError("");
     try {
@@ -148,92 +175,241 @@ export default function Workspace() {
       setNotice(message);
       return true;
     } catch (e) {
-      setError(e instanceof Error ? e.message : "操作失败");
+      setError(e instanceof Error ? e.message : "操作失败，请稍后重试。");
       return false;
     } finally {
       setBusy(false);
     }
   }
-  function open(e: Entity) {
+  function navigate(next: string) {
+    setPage(next);
+    setTopic(null);
+    setSelected([]);
+    setSelecting(false);
+    setAiOpen(false);
+    setAnalyses([]);
+    setMobileNav(false);
+    setStatusFilter("全部");
+    setTypeFilter("全部");
+    setShowArchived(false);
+    setDetail(null);
+  }
+  function openTopic(e: Entity) {
+    setTopic(e.id);
+    setPage("主题详情");
+    setTab(rememberedKind(e.data.lastPosition));
+    setGraph(false);
+    setSelected([]);
+    setSelecting(false);
+    setAnalyses([]);
+    setAiOpen(false);
+    setMobileNav(false);
+  }
+  function openDetail(e: Entity) {
+    if (e.kind === "topic" && !e.deletedAt) {
+      openTopic(e);
+      return;
+    }
+    setDetail(e);
+  }
+  function openEdit(e: Entity) {
+    setDetail(null);
     setEdit({ kind: e.kind, entity: e, topic: e.topic });
   }
   function add(kind: Kind, data?: Record<string, unknown>) {
     setEdit({ kind, topic: page === "主题详情" ? topic : null, data });
   }
-  async function openTopic(t: Entity) {
-    setTopic(t.id);
-    setTab(String(t.data.lastPosition || "card"));
-    setPage("主题详情");
-    setSelected([]);
-    setGraph(false);
-  }
-  async function switchTab(value: string) {
-    setTab(value);
-    const t = alive.find((x) => x.id === topic);
-    if (t)
-      await work(
-        () =>
-          api("entities/" + t.id, "PATCH", {
-            data: { ...t.data, lastPosition: value },
-            topic: null,
-            version: t.version,
-          }),
-        "已记住主题位置",
-      );
-  }
-  async function remove(e: Entity) {
-    const impacts = await api<{ source: string; field: string }[]>(
-      "entities/" + e.id + "/impact",
+  function jump(e: Entity) {
+    setDetail(null);
+    setHistory(null);
+    if (e.deletedAt) {
+      navigate("回收站");
+      setDetail(e);
+      return;
+    }
+    if (e.kind === "topic") {
+      openTopic(e);
+      return;
+    }
+    if (e.topic) {
+      const parent = alive.find((x) => x.id === e.topic);
+      if (parent) {
+        openTopic(parent);
+        setTab(e.kind);
+        setDetail(e);
+        return;
+      }
+    }
+    navigate(
+      e.kind === "question"
+        ? "待思考"
+        : ["task", "event"].includes(e.kind)
+          ? "待办与事件"
+          : "收集箱",
     );
-    if (
-      confirm(
-        `删除“${name(e).slice(0, 40)}”？有 ${impacts.length} 处关联引用。关系将暂时失效，任务、证据和历史仍保留，可在回收站恢复。`,
-      )
-    )
-      await api("entities/" + e.id, "DELETE", { version: e.version });
+    setDetail(e);
   }
-  async function patch(e: Entity, data: Record<string, unknown>) {
+  async function switchTab(kind: Kind) {
+    setTab(kind);
+    const current = items.find((e) => e.id === topic);
+    if (current && current.data.lastPosition !== kind) {
+      try {
+        const saved = await api<Entity>("entities/" + current.id, "PATCH", {
+          data: { ...current.data, lastPosition: kind },
+          topic: null,
+          version: current.version,
+        });
+        setItems((rows) => rows.map((e) => (e.id === saved.id ? saved : e)));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "无法保存当前位置");
+      }
+    }
+  }
+  async function patch(e: Entity, change: Record<string, unknown>) {
     await work(() =>
       api("entities/" + e.id, "PATCH", {
-        data: { ...e.data, ...data },
+        data: { ...e.data, ...change },
         topic: e.topic,
         version: e.version,
       }),
     );
   }
-  function jump(e: Entity) {
-    if (e.kind === "topic") {
-      void openTopic(e);
-      return;
-    }
-    if (e.topic) {
-      const t = alive.find((x) => x.id === e.topic);
-      if (t) {
-        setTopic(t.id);
-        setPage("主题详情");
-        setTab(e.kind);
-        setSelected([e.id]);
-      }
-    } else {
-      setTopic(null);
-      setPage(
-        e.kind === "task" || e.kind === "event"
-          ? "待办与事件"
-          : e.kind === "question"
-            ? "待思考"
-            : "收集箱",
-      );
-    }
-    open(e);
+  async function complete(e: Entity) {
+    await patch(e, {
+      status: finished(e)
+        ? states[e.kind]?.[0]
+        : e.kind === "task"
+          ? "已完成"
+          : e.kind === "event"
+            ? "已处理"
+            : "已解决",
+    });
   }
-  async function suggestion(s: Suggestion, kind?: Kind) {
+  async function remove(e: Entity) {
+    const impact = await api<{ source: string; field: string }[]>(
+      "entities/" + e.id + "/impact",
+    );
+    if (
+      !confirm(
+        `删除“${entityName(e).slice(0, 45)}”？${impact.length ? "有 " + impact.length + " 处关联会暂时失效。" : ""}你可以在回收站恢复，历史记录会保留。`,
+      )
+    )
+      return;
+    await api("entities/" + e.id, "DELETE", { version: e.version });
+    if (e.id === topic) navigate("我的主题");
+  }
+  async function openHistory(e: Entity) {
+    await work(async () => {
+      const versions = await api<
+        { version: number; snapshot: Entity; created_at: string }[]
+      >("entities/" + e.id + "/history");
+      setDetail(null);
+      setHistory({ entity: e, versions });
+    }, "已载入历史版本");
+  }
+  function actions(e: Entity): MenuAction[] {
+    if (e.deletedAt)
+      return [
+        {
+          label: "恢复",
+          action: () =>
+            void work(
+              () =>
+                api("entities/" + e.id + "/restore", "POST", {
+                  version: e.version,
+                }),
+              "已恢复",
+            ),
+        },
+      ];
+    const rows: MenuAction[] = [
+      { label: "编辑", action: () => openEdit(e) },
+      {
+        label: e.data.pinned ? "取消置顶" : "置顶",
+        action: () => void patch(e, { pinned: !e.data.pinned }),
+      },
+      {
+        label: e.data.today ? "取消今日关注" : "今日关注",
+        action: () => void patch(e, { today: !e.data.today }),
+      },
+    ];
+    if (e.kind === "card")
+      rows.push(
+        {
+          label: "拆分",
+          action: () => {
+            setSplit(e);
+            setSplitText(String(e.data.content));
+          },
+        },
+        {
+          label: e.data.collapsed ? "展开卡片" : "折叠卡片",
+          action: () => void patch(e, { collapsed: !e.data.collapsed }),
+        },
+        {
+          label: "转为待思考问题",
+          action: () =>
+            add("question", { title: String(e.data.content), refs: [e.id] }),
+        },
+      );
+    rows.push(
+      {
+        label: e.data.archived ? "取消归档" : "归档",
+        action: () => void patch(e, { archived: !e.data.archived }),
+      },
+      { label: "历史版本", action: () => void openHistory(e) },
+      {
+        label: "删除",
+        danger: true,
+        action: () => void work(() => remove(e), "删除操作已处理"),
+      },
+    );
+    return rows;
+  }
+  async function save(
+    data: Record<string, unknown>,
+    target: string | null,
+    version?: number,
+  ) {
+    if (!edit) return;
+    try {
+      if (edit.suggestion)
+        await api("suggestions/" + edit.suggestion, "POST", {
+          action: "accept",
+          kind: edit.kind,
+          data,
+        });
+      else
+        await api(
+          "entities" + (edit.entity ? "/" + edit.entity.id : ""),
+          edit.entity ? "PATCH" : "POST",
+          {
+            kind: edit.kind,
+            data,
+            topic: edit.kind === "topic" ? null : target,
+            version: version ?? edit.entity?.version,
+          },
+        );
+      await refresh();
+      setNotice("已保存");
+    } catch (e) {
+      try {
+        await refresh();
+      } catch {}
+      throw e;
+    }
+  }
+  async function suggest(s: Suggestion, a: Analysis, kind?: Kind) {
     if (s.target) {
-      const target = items.find((x) => x.id === s.target);
-      if (target) jump(target);
+      const target = items.find((e) => e.id === s.target);
+      if (target) {
+        setAiOpen(false);
+        jump(target);
+      }
       return;
     }
+    let k = (kind || s.kind) as Kind;
     const d = s.data;
-    let k: Kind = (kind || s.kind) as Kind;
     let data: Record<string, unknown>;
     if (s.kind === "card")
       data = {
@@ -245,10 +421,8 @@ export default function Workspace() {
       };
     else if (s.kind === "relation") {
       const resolve = (id: string) =>
-        analyses
-          .flatMap((a) => a.suggestions)
-          .find((x) => x.kind === "card" && x.data.localId === id)?.target ||
-        id;
+        a.suggestions.find((x) => x.kind === "card" && x.data.localId === id)
+          ?.target || id;
       data = {
         ...d,
         from: (d.from as string[]).map(resolve),
@@ -256,10 +430,10 @@ export default function Workspace() {
       };
       if (
         [...(data.from as string[]), ...(data.to as string[])].some(
-          (id) => !alive.find((x) => x.id === id),
+          (id) => !alive.some((e) => e.id === id),
         )
       ) {
-        setError("请先采纳关系中的卡片草稿");
+        setError("请先采纳这条关系引用的卡片。");
         return;
       }
     } else if (s.kind === "issue") {
@@ -276,9 +450,12 @@ export default function Workspace() {
             }
           : {
               title: d.title,
-              type: "普通任务",
+              type: "验证任务",
               action: d.validation,
               information: d.missing,
+              hypothesisRefs: ((d.refs as string[]) || []).filter(
+                (id) => items.find((e) => e.id === id)?.data.type === "假设",
+              ),
               status: "待开始",
             };
     } else
@@ -299,325 +476,127 @@ export default function Workspace() {
               criterion: d.criterion,
               status: "待开始",
             };
-    setEdit({ kind: k, topic, suggestion: s.id, data });
+    setEdit({ kind: k, topic: a.topic, suggestion: s.id, data });
   }
-  async function save(
-    data: Record<string, unknown>,
-    t: string | null,
-    version?: number,
-  ) {
-    if (!edit) return;
-    try {
-      if (edit.suggestion)
-        await api("suggestions/" + edit.suggestion, "POST", {
-          action: "accept",
-          kind: edit.kind,
-          data,
-        });
-      else
-        await api(
-          "entities" + (edit.entity ? "/" + edit.entity.id : ""),
-          edit.entity ? "PATCH" : "POST",
-          {
-            kind: edit.kind,
-            data,
-            topic: edit.kind === "topic" ? null : t,
-            version: version ?? edit.entity?.version,
-          },
-        );
-      await refresh();
-      setNotice("保存成功");
-    } catch (e) {
-      await refresh();
-      throw e;
-    }
+  async function analyze(mode: string, answers: string) {
+    const target = topic;
+    if (!target) return;
+    return work(async () => {
+      await api("analyses", "POST", {
+        topic: target,
+        ids: selecting ? selectedScoped : [],
+        mode,
+        answers,
+      });
+      const results = await api<Analysis[]>("analyses?topic=" + target);
+      if (topicRef.current === target) setAnalyses(results);
+    }, "分析已保存，请确认需要采纳的建议。");
   }
   function choose(id: string) {
-    setSelected((s) =>
-      s.includes(id) ? s.filter((x) => x !== id) : [...s, id],
+    setSelected((ids) =>
+      ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id],
     );
   }
-  const taskDate = (e: Entity) =>
-    String(e.kind === "event" ? e.data.date || "" : e.data.due || "").slice(
-      0,
-      10,
-    );
-  const isDone = (e: Entity) =>
-    ["已完成", "取消", "已处理"].includes(String(e.data.status));
-  function dateMatch(e: Entity) {
-    const d = taskDate(e);
-    if (filter === "全部") return true;
-    if (filter === "逾期") return Boolean(d && d < today && !isDone(e));
-    if (filter === "今日") return d === today;
-    const current = new Date(today + "T12:00:00Z");
-    const day = (current.getUTCDay() + 6) % 7;
-    const monday = new Date(current);
-    monday.setUTCDate(current.getUTCDate() - day);
-    const sunday = new Date(monday);
-    sunday.setUTCDate(monday.getUTCDate() + 6);
-    return Boolean(
-      d &&
-      d >= monday.toISOString().slice(0, 10) &&
-      d <= sunday.toISOString().slice(0, 10),
+  function selectToggle() {
+    setSelecting((v) => !v);
+    setSelected([]);
+  }
+  function list(rows: Entity[], topics = false, empty?: string) {
+    return (
+      <EntityList
+        items={rows}
+        topics={topics}
+        onOpen={openDetail}
+        actions={actions}
+        onComplete={(e) => void complete(e)}
+        selecting={selecting}
+        selected={selected}
+        onSelect={choose}
+        zone={zone}
+        today={today}
+        empty={empty}
+      />
     );
   }
-  function rows(rows: Entity[]) {
-    return rows
-      .slice()
-      .sort(
-        (a, b) =>
-          Number(Boolean(b.data.pinned)) - Number(Boolean(a.data.pinned)) ||
-          Number(a.data.order || 0) - Number(b.data.order || 0),
-      )
-      .map((e) => (
-        <article className="item" key={e.id}>
-          <div className="bar">
-            <input
-              aria-label={"选择" + name(e)}
-              type="checkbox"
-              style={{ width: 16 }}
-              checked={selected.includes(e.id)}
-              onChange={() => choose(e.id)}
-            />
-            <span className="badge">{titles[e.kind]}</span>
-            {Boolean(e.data.status) && (
-              <span className="badge">{String(e.data.status)}</span>
-            )}
-            <span className="muted">{e.id.slice(0, 8)}</span>
-            {e.data.today === true && <span className="tag">今日关注</span>}
-            {e.data.pinned === true && <span className="tag">重要置顶</span>}
-            {e.data.archived === true && <span className="tag">已归档</span>}
-          </div>
-          <h3>
+  function selectBar() {
+    return (
+      <>
+        {selecting ? (
+          <div className="selection-bar">
+            <span>已选择 {selected.length} 项</span>
             <button
-              className="subtle"
-              onClick={() => (e.kind === "topic" ? void openTopic(e) : open(e))}
+              onClick={() =>
+                setSelected(
+                  scoped.filter((e) => e.kind === tab).map((e) => e.id),
+                )
+              }
             >
-              {name(e).slice(0, 120)}
+              全选当前列表
             </button>
-          </h3>
-          {e.data.group ? (
-            <span className="badge">分组：{String(e.data.group)}</span>
-          ) : null}
-          {Boolean(e.data.type) && (
-            <p className="muted">
-              {String(e.data.type)}
-              {e.kind === "card" && e.data.type === "事实或观察"
-                ? " · 不代表已核实"
-                : ""}
-            </p>
-          )}
-          {Boolean(e.data.content) && String(e.data.content) !== name(e) && (
-            <details open={!e.data.collapsed}>
-              <summary>展开内容</summary>
-              <p>{String(e.data.content)}</p>
-            </details>
-          )}
-          {String(e.data.content || "").length > 120 &&
-            String(e.data.content) === name(e) && (
-              <details>
-                <summary>展开长内容</summary>
-                <p>{String(e.data.content)}</p>
-              </details>
-            )}
-          {e.kind === "relation" && (
-            <p>
-              {((e.data.from as string[]) || [])
-                .map(
-                  (id) =>
-                    alive.find((x) => x.id === id)?.data.title ||
-                    id.slice(0, 8),
-                )
-                .join(" + ")}{" "}
-              →{" "}
-              {((e.data.to as string[]) || [])
-                .map(
-                  (id) =>
-                    alive.find((x) => x.id === id)?.data.title ||
-                    id.slice(0, 8),
-                )
-                .join(", ")}{" "}
-              · {String(e.data.type)}
-              <br />
-              为什么这样连接：{String(e.data.reason || "尚未填写")}
-            </p>
-          )}
-          <details>
-            <summary>查看完整记录</summary>
-            {fields[e.kind]
-              .filter(
-                (f) =>
-                  f.type !== "refs" &&
-                  e.data[f.key] !== undefined &&
-                  e.data[f.key] !== "",
-              )
-              .map((f) => (
-                <p key={f.key}>
-                  <strong>{f.label}：</strong>
-                  {String(e.data[f.key])}
-                </p>
-              ))}
-            <p className="muted">
-              创建：{e.createdAt}
-              <br />
-              更新：{e.updatedAt}
-            </p>
-          </details>
-          {referenceFields(e.kind).flatMap((k) =>
-            ((e.data[k] as string[]) || []).map((id) => {
-              const target = items.find((x) => x.id === id);
-              return (
-                <button
-                  className="subtle"
-                  key={k + id}
-                  onClick={() => target && jump(target)}
-                  disabled={!target || Boolean(target.deletedAt)}
-                >
-                  {fields[e.kind].find((f) => f.key === k)?.label || "关联"}：
-                  {target ? name(target).slice(0, 15) : id.slice(0, 8)}
-                  {target?.deletedAt ? "（已删除）" : ""}
-                </button>
-              );
-            }),
-          )}
-          {taskDate(e) && (
-            <p
-              className={taskDate(e) < today && !isDone(e) ? "alert" : "muted"}
-            >
-              {e.kind === "event" ? "事件时间" : "截止日期"}：
-              {String(e.kind === "event" ? e.data.date : e.data.due)}
-              {taskDate(e) < today && !isDone(e) ? " · 已逾期" : ""}
-            </p>
-          )}
-          {e.kind === "relation" &&
-            [
-              ...((e.data.from as string[]) || []),
-              ...((e.data.to as string[]) || []),
-            ].some((id) => !alive.some((x) => x.id === id)) && (
-              <p className="alert">
-                关联卡片已删除，这条关系暂时失效。可恢复卡片或重新编辑关系。
-              </p>
-            )}
-          {e.kind === "task" &&
-            e.data.type === "验证任务" &&
-            e.data.status === "已完成" &&
-            !e.data.result && (
-              <p className="alert">
-                行动已完成，验证结果未记录。完成不自动证明假设。
-              </p>
-            )}
-          <div className="bar">
-            {e.deletedAt ? (
+            {selectedScoped.filter(
+              (id) => scoped.find((e) => e.id === id)?.kind === "card",
+            ).length > 1 && (
               <button
                 onClick={() =>
-                  void work(
-                    () =>
-                      api("entities/" + e.id + "/restore", "POST", {
-                        version: e.version,
-                      }),
-                    "恢复成功",
-                  )
+                  void work(() => {
+                    const cards = scoped.filter(
+                      (e) => selectedScoped.includes(e.id) && e.kind === "card",
+                    );
+                    return api("transform", "POST", {
+                      ids: cards.map((e) => e.id),
+                      versions: Object.fromEntries(
+                        cards.map((e) => [e.id, e.version]),
+                      ),
+                      parts: null,
+                    });
+                  }, "已合并卡片，关联和来源已保留")
                 }
               >
-                恢复
+                合并卡片
               </button>
-            ) : (
-              <>
-                <button onClick={() => open(e)}>编辑</button>
-                <button onClick={() => void patch(e, { today: !e.data.today })}>
-                  {e.data.today ? "取消今日关注" : "今日关注"}
-                </button>
-                <button
-                  onClick={() => void patch(e, { pinned: !e.data.pinned })}
-                >
-                  {e.data.pinned ? "取消置顶" : "置顶"}
-                </button>
-                {e.kind === "card" && (
-                  <>
-                    <button
-                      onClick={() => {
-                        setSplit(e);
-                        setSplitText(String(e.data.content));
-                      }}
-                    >
-                      拆分
-                    </button>
-                    <button
-                      onClick={() =>
-                        void patch(e, { collapsed: !e.data.collapsed })
-                      }
-                    >
-                      {e.data.collapsed ? "展开" : "折叠"}
-                    </button>
-                    <button
-                      onClick={() =>
-                        add("question", {
-                          title: String(e.data.content),
-                          refs: [e.id],
-                        })
-                      }
-                    >
-                      转为问题
-                    </button>
-                  </>
-                )}
-                {["task", "event", "question"].includes(e.kind) && (
-                  <button
-                    onClick={() =>
-                      void patch(e, {
-                        status:
-                          isDone(e) || e.data.status === "已解决"
-                            ? states[e.kind]?.[0] || "待开始"
-                            : e.kind === "task"
-                              ? "已完成"
-                              : e.kind === "event"
-                                ? "已处理"
-                                : "已解决",
-                      })
-                    }
-                  >
-                    {isDone(e) || e.data.status === "已解决"
-                      ? "重新打开"
-                      : "完成/解决"}
-                  </button>
-                )}
-                <button
-                  onClick={() => void patch(e, { archived: !e.data.archived })}
-                >
-                  {e.data.archived ? "取消归档" : "归档"}
-                </button>
-                <button
-                  onClick={() =>
-                    void work(async () => {
-                      setHistory({
-                        entity: e,
-                        versions: await api("entities/" + e.id + "/history"),
-                      });
-                    }, "已读取历史")
-                  }
-                >
-                  历史与撤销
-                </button>
-                <button
-                  onClick={() => void work(() => remove(e), "删除处理完成")}
-                >
-                  删除
-                </button>
-              </>
             )}
+            <button className="text-button" onClick={selectToggle}>
+              退出选择
+            </button>
           </div>
-        </article>
-      ));
+        ) : (
+          <button className="text-button" onClick={selectToggle}>
+            选择内容
+          </button>
+        )}
+      </>
+    );
   }
-  if (loading) return <div className="login panel">正在读取账号…</div>;
+  const archives = (
+    <label className="checkbox-label compact-label">
+      <input
+        type="checkbox"
+        checked={showArchived}
+        onChange={(e) => setShowArchived(e.target.checked)}
+      />
+      <span>显示已归档</span>
+    </label>
+  );
+  if (loading)
+    return (
+      <main className="login">
+        <p className="muted">正在载入你的思路…</p>
+      </main>
+    );
   if (!user)
     return (
-      <div className="login panel">
-        <span className="tag">THOUGHT ORGANIZER</span>
-        <h1>思路整理器</h1>
-        <p className="muted">记录想法，检查推导，留下下一步。</p>
-        <h2>{register ? "创建私人账号" : "登录"}</h2>
-        {error && <p className="alert error">{error}</p>}
+      <main className="login">
+        <div className="brand">
+          <LayersIcon />
+          <span>思路整理器</span>
+        </div>
+        <h1>{register ? "创建你的私人空间" : "继续你的思路"}</h1>
+        <p className="muted">记录、整理，再向前走一步。</p>
+        {error && (
+          <p className="notice error" role="alert">
+            {error}
+          </p>
+        )}
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -628,20 +607,24 @@ export default function Workspace() {
               });
               setPassword("");
               setRegister(false);
-              setPage("首页");
-              setTopic(null);
-              setSelected([]);
-              setAnalyses([]);
-              setSearch("");
-            }, "登录成功");
+              navigate("首页");
+              const u = await api<User>("me");
+              try {
+                const value =
+                  localStorage.getItem("thought-draft:" + u.id + ":quick") ||
+                  "";
+                setQuick(value);
+                quickRef.current = value;
+              } catch {}
+            }, "已登录");
           }}
         >
           <label>
             <span>邮箱</span>
             <input
               type="email"
-              autoComplete="email"
               required
+              autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
@@ -650,213 +633,75 @@ export default function Workspace() {
             <span>密码（至少10位）</span>
             <input
               type="password"
+              required
               minLength={10}
               maxLength={128}
-              required
               autoComplete={register ? "new-password" : "current-password"}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
           </label>
-          <div className="bar">
-            <button className="primary" disabled={busy}>
-              {busy ? "处理中…" : register ? "注册并登录" : "登录"}
-            </button>
-            <button type="button" onClick={() => setRegister(!register)}>
-              {register ? "已有账号" : "创建账号"}
-            </button>
-          </div>
-        </form>
-        <p className="muted">内容默认私人。AI配置不影响手动整理。</p>
-      </div>
-    );
-  const t = alive.find((x) => x.id === topic);
-  const scoped = alive.filter((x) => x.topic === topic);
-  const trash = items.filter((x) => x.deletedAt);
-  const visible = alive.filter(
-    (x) =>
-      !x.data.archived &&
-      (statusFilter === "全部" || x.data.status === statusFilter),
-  );
-  const inputScope =
-    topic && !t
-      ? []
-      : selectScope(
-          alive,
-          topic,
-          selected.filter((id) => scoped.some((x) => x.id === id)),
-        );
-  const aiPanel = (
-    <aside className="panel">
-      <h2>AI建议</h2>
-      <p className="muted">
-        仅使用当前主题或明确选中内容。建议由你确认后保存。
-      </p>
-      {!user.aiConfigured && (
-        <p className="alert">AI未配置：其他功能正常可用。</p>
-      )}
-      <label>
-        <span>动作</span>
-        <select value={mode} onChange={(e) => setMode(e.target.value)}>
-          {["整理思路", "检查推导", "生成下一步"].map((m) => (
-            <option key={m}>{m}</option>
-          ))}
-        </select>
-      </label>
-      <details>
-        <summary>查看本次输入范围（{inputScope.length}项）</summary>
-        {inputScope.map((x) => (
-          <p key={x.id}>
-            {titles[x.kind]} · {x.id} · 内容版本 {x.contentVersion}
-            <br />
-            {name(x)}
-          </p>
-        ))}
-        <p>目标：{String(t?.data.goal || "未填写")}</p>
-      </details>
-      <label>
-        <span>澄清回答 / 补充要求（可跳过）</span>
-        <textarea
-          value={answers}
-          onChange={(e) => setAnswers(e.target.value)}
-        />
-      </label>
-      <button
-        disabled={busy || !user.aiConfigured}
-        className="primary"
-        onClick={() =>
-          void work(async () => {
-            await api("analyses", "POST", {
-              topic,
-              ids: selected.filter((id) => scoped.some((x) => x.id === id)),
-              mode,
-              answers,
-            });
-            const results = await api<Analysis[]>("analyses?topic=" + topic);
-            if (topicRef.current === topic) setAnalyses(results);
-          }, "分析已保存，请逐条确认")
-        }
-      >
-        {busy ? "分析中…" : "生成分析草稿"}
-      </button>
-      {analyses.map((a) => (
-        <div className="item" key={a.id}>
-          <span className="muted">
-            {new Date(a.created_at).toLocaleString("zh-CN", {
-              timeZone: user.settings.timezone,
-            })}
-          </span>
-          {a.stale && (
-            <p className="alert">旧分析：输入内容已变化，禁止采纳。</p>
-          )}
-          <p>{a.result.understanding}</p>
-          {a.result.clarifications.map((q, i) => (
-            <p key={i}>
-              澄清 {i + 1}：{q}（可跳过）
-            </p>
-          ))}
-          <details>
-            <summary>查看输入快照</summary>
-            <pre>
-              {JSON.stringify(
-                a.snapshot.map(({ owner: _, ...x }) => {
-                  void _;
-                  return x;
-                }),
-                null,
-                2,
-              )}
-            </pre>
-          </details>
-          {a.suggestions.map((s) => (
-            <div className="panel" key={s.id}>
-              <strong>
-                {String(s.data.title || s.data.type || "关系建议")}
-              </strong>
-              <p className="muted">
-                {s.kind} · {s.status}
-              </p>
-              <details>
-                <summary>理由、原句与字段</summary>
-                <pre>{JSON.stringify(s.data, null, 2)}</pre>
-              </details>
-              <div className="bar">
-                <button
-                  disabled={a.stale && !s.target}
-                  onClick={() => void suggestion(s)}
-                >
-                  {s.target ? "打开已创建项目" : "预览与修改"}
-                </button>
-                {s.kind === "issue" && (
-                  <button
-                    disabled={a.stale}
-                    onClick={() => void suggestion(s, "task")}
-                  >
-                    预览转为任务
-                  </button>
-                )}
-                <button
-                  onClick={() =>
-                    void work(async () => {
-                      await api("suggestions/" + s.id, "POST", {
-                        action: "ignore",
-                        feedback: prompt("忽略理由（可空）") || "",
-                      });
-                      const results = await api<Analysis[]>(
-                        "analyses?topic=" + topic,
-                      );
-                      if (topicRef.current === topic) setAnalyses(results);
-                    }, "反馈已保存")
-                  }
-                >
-                  忽略
-                </button>
-              </div>
-            </div>
-          ))}
-          <button
-            onClick={() =>
-              void work(
-                () =>
-                  api("feedback", "POST", {
-                    analysisId: a.id,
-                    rating: "部分有用",
-                    comment: prompt("对本次分析的反馈（可空）") || "",
-                  }),
-                "反馈已保存",
-              )
-            }
-          >
-            提交分析反馈
+          <button className="primary full-width" disabled={busy}>
+            {busy ? "处理中…" : register ? "注册并登录" : "登录"}
           </button>
-        </div>
-      ))}
-    </aside>
-  );
-  return (
-    <div className="shell">
-      <nav className="nav">
-        <h2>思路整理器</h2>
-        <p className="muted">想法 → 判断 → 验证</p>
+          <button
+            className="text-button full-width"
+            type="button"
+            onClick={() => setRegister(!register)}
+          >
+            {register ? "已有账号，去登录" : "创建账号"}
+          </button>
+        </form>
+        <p className="muted small">
+          内容默认私人，未配置 AI 也可以完整使用手动整理功能。
+        </p>
+      </main>
+    );
+  const inbox = alive.filter((e) => !e.topic && e.kind !== "topic"),
+    activeSection = sectionFor(tab),
+    visible = alive.filter(
+      (e) =>
+        (showArchived || !e.data.archived) &&
+        (statusFilter === "全部" || e.data.status === statusFilter),
+    );
+  const navigation = (
+    <>
+      <div className="brand">
+        <LayersIcon />
+        <span>思路整理器</span>
+      </div>
+      <nav aria-label="主要导航">
         {nav.map((n) => (
           <button
-            key={n}
-            aria-pressed={page === n}
-            onClick={() => {
-              setPage(n);
-              setSelected([]);
-              setStatusFilter("全部");
-              if (n !== "主题详情") setTopic(null);
-            }}
+            key={n.name}
+            aria-label={n.name}
+            aria-current={page === n.name ? "page" : undefined}
+            onClick={() => navigate(n.name)}
           >
-            {n}
-            {n === "收集箱"
-              ? " · " +
-                alive.filter((x) => !x.topic && x.kind !== "topic").length
-              : ""}
+            <n.icon />
+            <span>{n.name}</span>
+            {n.name === "收集箱" && inbox.length > 0 && (
+              <small>{inbox.length}</small>
+            )}
           </button>
         ))}
-        <p className="muted">{user.email}</p>
+      </nav>
+      <div className="nav-bottom">
+        <p className="account-label">{user.email}</p>
+        <button
+          onClick={() => navigate("设置")}
+          aria-current={page === "设置" ? "page" : undefined}
+        >
+          <GearIcon />
+          设置
+        </button>
+        <button
+          onClick={() => navigate("回收站")}
+          aria-current={page === "回收站" ? "page" : undefined}
+        >
+          <TrashIcon />
+          回收站
+        </button>
         <button
           onClick={() =>
             void work(async () => {
@@ -870,505 +715,660 @@ export default function Workspace() {
               } catch {}
               setUser(null);
               setItems([]);
-            }, "已退出")
+              setDetail(null);
+              setEdit(null);
+            }, "已退出登录")
           }
         >
+          <ExitIcon />
           退出登录
         </button>
-      </nav>
-      <main className="main">
-        <div className="toast">
+      </div>
+    </>
+  );
+  return (
+    <div className="shell">
+      <aside className="sidebar">{navigation}</aside>
+      <div className="workspace-main">
+        <header className="topbar">
+          <div className="topbar-leading">
+            <button
+              className="icon-button mobile-menu"
+              aria-label="打开导航"
+              onClick={() => setMobileNav(true)}
+            >
+              <HamburgerMenuIcon />
+            </button>
+            <span className="breadcrumb">
+              {page === "主题详情"
+                ? "我的主题 / " + String(t?.data.title || "主题")
+                : page}
+            </span>
+          </div>
+          <div className="bar">
+            <button
+              className="global-search"
+              onClick={() => {
+                navigate("搜索");
+                setSearch("");
+              }}
+            >
+              <MagnifyingGlassIcon />
+              <span>搜索全部内容</span>
+            </button>
+            <button
+              className="icon-button"
+              disabled={busy}
+              aria-label="刷新内容"
+              onClick={() => void work(refresh, "已刷新")}
+            >
+              <ReloadIcon />
+            </button>
+          </div>
+        </header>
+        <main className="main" id="main-content">
           {error && (
-            <p role="alert" className="alert error">
-              {error}{" "}
-              <button className="subtle" onClick={() => setError("")}>
-                关闭
+            <div className="notice error" role="alert">
+              {error}
+              <button className="text-button" onClick={() => setError("")}>
+                关闭提示
               </button>
-            </p>
+            </div>
           )}
           {notice && (
-            <p role="status" className="alert">
-              {notice}{" "}
-              <button className="subtle" onClick={() => setNotice("")}>
+            <div className="save-status" role="status">
+              {notice}
+              <button
+                className="text-button"
+                aria-label="关闭保存提示"
+                onClick={() => setNotice("")}
+              >
                 关闭
               </button>
-            </p>
+            </div>
           )}
-        </div>
-        <header className="bar">
-          <h1>
-            {page === "主题详情" ? String(t?.data.title || "主题") : page}
-          </h1>
-          <span className="muted">
-            {today} · {user.settings.timezone}
-          </span>
-          <button disabled={busy} onClick={() => void work(refresh, "已刷新")}>
-            刷新
-          </button>
-        </header>
-        {page === "首页" && (
-          <>
-            <section className="panel">
-              <h2>先记下来，再慢慢理清</h2>
-              <label>
-                <span>快速记录（只需内容）</span>
+          <div className="page-heading">
+            <div>
+              {page === "主题详情" && (
+                <button
+                  className="text-button back-link"
+                  onClick={() => navigate("我的主题")}
+                >
+                  <ArrowLeftIcon />
+                  所有主题
+                </button>
+              )}
+              <h1 tabIndex={-1}>
+                {page === "主题详情"
+                  ? String(t?.data.title || "主题已移入回收站")
+                  : page}
+              </h1>
+              {page === "今日关注" && (
+                <>
+                  {list(
+                    focusItems(alive, today, Infinity),
+                    false,
+                    "暂时没有关注事项。",
+                  )}
+                </>
+              )}
+              {page === "首页" && (
+                <p className="muted">留住想法，继续上次的思考。</p>
+              )}
+            </div>
+            {page === "我的主题" && (
+              <button className="primary" onClick={() => add("topic")}>
+                <PlusIcon />
+                新建主题
+              </button>
+            )}
+            {page === "主题详情" && t && (
+              <div className="bar">
+                <button onClick={() => setAiOpen(true)}>
+                  <LightningBoltIcon />
+                  AI助手
+                </button>
+                <Menu label="主题" actions={actions(t)} />
+              </div>
+            )}
+          </div>
+          {page === "首页" && (
+            <div className="home-layout">
+              <section className="quick-record surface" aria-label="快速记录区">
+                <h2>快速记录</h2>
+                <p className="muted">先写下来，不用急着整理。</p>
                 <textarea
+                  aria-label="快速记录"
                   value={quick}
                   onChange={(e) => {
                     setQuick(e.target.value);
+                    quickRef.current = e.target.value;
                     try {
                       localStorage.setItem(
                         "thought-draft:" + user.id + ":quick",
                         e.target.value,
                       );
                     } catch {
-                      setError("无法保留快速记录草稿，请复制内容");
+                      setError("无法保留本地草稿，请复制重要内容。");
                     }
                   }}
-                  placeholder="粘贴笔记、聊天，或写下刚刚的想法…"
+                  placeholder="写下一个想法，或粘贴你的笔记和聊天…"
                 />
-              </label>
-              <button
-                className="primary"
-                disabled={busy || !quick.trim()}
-                onClick={() =>
-                  void work(async () => {
-                    await api("entities", "POST", {
-                      kind: "record",
-                      topic: null,
-                      data: { content: quick, status: "未整理" },
-                    });
-                    try {
-                      localStorage.removeItem(
-                        "thought-draft:" + user.id + ":quick",
-                      );
-                    } catch {}
-                    setQuick("");
-                  }, "原文已保存到收集箱")
-                }
-              >
-                保存到收集箱
-              </button>
-              <div className="bar">
-                <button onClick={() => add("topic")}>新建主题</button>
-                <button onClick={() => add("question")}>单独创建问题</button>
-                <button onClick={() => add("task")}>单独创建任务</button>
-                <button onClick={() => add("event")}>单独创建事件</button>
+                <div className="quick-footer">
+                  <span className="muted">
+                    {quick.trim()
+                      ? "本地草稿 · 尚未保存"
+                      : "文字会直接存入收集箱"}
+                  </span>
+                  <button
+                    className="primary"
+                    disabled={busy || !quick.trim()}
+                    onClick={() => {
+                      const content = quick;
+                      void work(async () => {
+                        await api("entities", "POST", {
+                          kind: "record",
+                          topic: null,
+                          data: { content, status: "未整理" },
+                        });
+                        if (quickRef.current === content) {
+                          setQuick("");
+                          quickRef.current = "";
+                          try {
+                            localStorage.removeItem(
+                              "thought-draft:" + user.id + ":quick",
+                            );
+                          } catch {}
+                        }
+                      }, "已保存到收集箱");
+                    }}
+                  >
+                    保存想法
+                  </button>
+                </div>
+              </section>
+              <section className="continue-section">
+                <div className="section-heading">
+                  <h2>继续整理</h2>
+                  <button
+                    className="text-button"
+                    onClick={() => navigate("我的主题")}
+                  >
+                    查看全部主题
+                    <ChevronRightIcon />
+                  </button>
+                </div>
+                {recentTopics(alive).length ? (
+                  list(recentTopics(alive), true)
+                ) : (
+                  <div className="empty-state">
+                    <p>把相关想法放进一个主题，下一次就能接着整理。</p>
+                    <button onClick={() => add("topic")}>
+                      <PlusIcon />
+                      新建主题
+                    </button>
+                  </div>
+                )}
+                {inbox.length > 0 && (
+                  <button
+                    className="inbox-shortcut"
+                    onClick={() => navigate("收集箱")}
+                  >
+                    <ArchiveIcon />
+                    收集箱还有 {inbox.length} 条内容待整理
+                    <ChevronRightIcon />
+                  </button>
+                )}
+              </section>
+              <section className="today-section">
+                <div className="section-heading">
+                  <h2>今日关注</h2>
+                  <button
+                    className="text-button"
+                    onClick={() => navigate("今日关注")}
+                  >
+                    查看完整列表
+                    <ChevronRightIcon />
+                  </button>
+                </div>
+                {list(
+                  focusItems(alive, today),
+                  false,
+                  "暂时没有需要关注的事项。在内容的“更多”中选择今日关注。",
+                )}
+              </section>
+            </div>
+          )}
+          {page === "我的主题" && (
+            <>
+              <div className="toolbar">
+                <div className="search-input">
+                  <MagnifyingGlassIcon />
+                  <input
+                    aria-label="搜索主题"
+                    placeholder="搜索主题名称或标签"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                </div>
+                <select
+                  aria-label="主题阶段"
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                >
+                  {["全部", ...states.topic!].map((v) => (
+                    <option key={v}>{v}</option>
+                  ))}
+                </select>
+                {archives}
               </div>
-            </section>
-            <div className="grid">
-              <section>
-                <h2>今日关注 · 由你选择</h2>
-                {rows(alive.filter((x) => x.data.today))}
-                {!alive.some((x) => x.data.today) && (
-                  <p className="muted">从任意事项选择“今日关注”。</p>
-                )}
-              </section>
-              <section>
-                <h2>最近主题</h2>
-                {rows(
-                  alive
-                    .filter(
-                      (x) => x.kind === "topic" && x.data.status !== "归档",
-                    )
-                    .slice(0, 4),
-                )}
-              </section>
-            </div>
-            <h2>
-              {user.settings.reminders
-                ? "临近截止与逾期"
-                : "日期事项（工具内提醒已关闭）"}
-            </h2>
-            {rows(
-              alive.filter(
-                (x) =>
-                  ["task", "event"].includes(x.kind) &&
-                  taskDate(x) &&
-                  !isDone(x) &&
-                  taskDate(x) <=
-                    new Date(
-                      new Date(today + "T12:00:00Z").getTime() + 7 * 86400000,
-                    )
-                      .toISOString()
-                      .slice(0, 10),
-              ),
-            )}
-            <h2>未归类内容</h2>
-            {rows(
-              alive.filter((x) => !x.topic && x.kind !== "topic").slice(0, 8),
-            )}
-          </>
-        )}
-        {page === "收集箱" && (
-          <>
-            <div className="bar">
-              {(
-                [
-                  "record",
-                  "card",
-                  "question",
-                  "task",
-                  "event",
-                  "evidence",
-                ] as Kind[]
-              ).map((k) => (
-                <button key={k} onClick={() => add(k)}>
-                  新建{titles[k]}
+              {list(
+                visible.filter(
+                  (e) =>
+                    e.kind === "topic" &&
+                    JSON.stringify(e.data)
+                      .toLowerCase()
+                      .includes(search.toLowerCase()),
+                ),
+                true,
+                "还没有主题，点击“新建主题”开始。",
+              )}
+            </>
+          )}
+          {page === "收集箱" && (
+            <>
+              <p className="muted page-intro">
+                先收下还没想清楚的内容，准备好时再归入主题。
+              </p>
+              <div className="toolbar">
+                <button className="primary" onClick={() => add("record")}>
+                  <PlusIcon />
+                  新建想法
                 </button>
-              ))}
-            </div>
-            {rows(alive.filter((x) => !x.topic && x.kind !== "topic"))}
-          </>
-        )}
-        {page === "主题" && (
-          <>
-            <div className="bar">
-              <button className="primary" onClick={() => add("topic")}>
-                新建主题
-              </button>
-              <input
-                style={{ maxWidth: 300 }}
-                placeholder="按名称、标签搜索"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-              <select
-                style={{ width: 140 }}
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-              >
-                {["全部", ...states.topic!].map((x) => (
-                  <option key={x}>{x}</option>
-                ))}
-              </select>
-            </div>
-            {rows(
-              alive.filter(
-                (x) =>
-                  x.kind === "topic" &&
-                  (statusFilter === "全部" || x.data.status === statusFilter) &&
-                  JSON.stringify(x.data).includes(search),
-              ),
-            )}
-          </>
-        )}
-        {page === "主题详情" && t && (
-          <>
-            <section className="panel">
-              <p>
-                <span className="badge">{String(t.data.status)}</span>目标：
-                {String(t.data.goal || "尚未设置")}
-              </p>
-              <p className="muted">
-                背景与限制：{String(t.data.background || "未填写")}
-                <br />
-                当前重点：{String(t.data.focus || "未填写")}
-              </p>
-              <button onClick={() => open(t)}>编辑主题 / 暂停 / 归档</button>
-              <p className="muted">
-                新增证据 {scoped.filter((x) => x.kind === "evidence").length} ·
-                未解决问题{" "}
-                {
-                  scoped.filter(
-                    (x) => x.kind === "question" && x.data.status !== "已解决",
-                  ).length
-                }{" "}
-                · 完成行动{" "}
-                {
-                  scoped.filter(
-                    (x) => x.kind === "task" && x.data.status === "已完成",
-                  ).length
-                }
-              </p>
-              {scoped
-                .filter((x) => x.kind === "review")
-                .slice(0, 1)
-                .map((x) => (
-                  <p key={x.id}>
-                    当前判断：{String(x.data.judgment || "未记录")}
+                <Menu
+                  label="新建其他内容"
+                  actions={kinds
+                    .filter((k) => !["topic", "record"].includes(k))
+                    .map((k) => ({
+                      label: "新建" + kindLabels[k],
+                      action: () => add(k),
+                    }))}
+                />
+                <select
+                  aria-label="内容类型"
+                  value={typeFilter}
+                  onChange={(e) => setTypeFilter(e.target.value)}
+                >
+                  <option value="全部">全部类型</option>
+                  {kinds
+                    .filter((k) => k !== "topic")
+                    .map((k) => (
+                      <option key={k} value={k}>
+                        {kindLabels[k]}
+                      </option>
+                    ))}
+                </select>
+                {archives}
+              </div>
+              {list(
+                visible.filter(
+                  (e) =>
+                    !e.topic &&
+                    e.kind !== "topic" &&
+                    (typeFilter === "全部" || e.kind === typeFilter),
+                ),
+                false,
+                "收集箱是空的，有新想法时随时记下来。",
+              )}
+            </>
+          )}
+          {page === "主题详情" && t && (
+            <>
+              <section className="topic-overview">
+                <div>
+                  <span className="overview-label">目标</span>
+                  <p>{String(t.data.goal || "暂未填写，随时可以补充。")}</p>
+                </div>
+                <div>
+                  <span className="overview-label">当前重点</span>
+                  <p>
+                    {String(t.data.focus || "从当前最想弄清楚的内容开始。")}
                   </p>
+                </div>
+                <details className="disclosure">
+                  <summary>主题详情</summary>
+                  <RecordFields
+                    entity={t}
+                    items={items}
+                    zone={zone}
+                    onJump={jump}
+                  />
+                  <button onClick={() => openEdit(t)}>编辑主题</button>
+                </details>
+              </section>
+              <div className="topic-tabs" role="group" aria-label="主题内容">
+                {topicSections.map((s, index) => (
+                  <button
+                    key={s.label}
+                    aria-pressed={activeSection === index}
+                    onClick={() => {
+                      const remembered = (
+                        s.kinds as readonly string[]
+                      ).includes(tab)
+                        ? tab
+                        : s.kinds[0];
+                      setGraph(false);
+                      void switchTab(remembered);
+                    }}
+                  >
+                    {s.label}
+                  </button>
                 ))}
-            </section>
-            <div className="detail">
-              <section>
-                <div className="bar tabs">
-                  {(
-                    [
-                      "record",
-                      "card",
-                      "relation",
-                      "question",
-                      "task",
-                      "event",
-                      "evidence",
-                      "validation",
-                      "review",
-                    ] as Kind[]
-                  ).map((k) => (
+              </div>
+              <section className="topic-content">
+                <div className="content-toolbar">
+                  <div className="segmented">
+                    {activeSection === 1 ? (
+                      <>
+                        <button
+                          aria-pressed={!graph && tab === "card"}
+                          onClick={() => {
+                            setGraph(false);
+                            void switchTab("card");
+                          }}
+                        >
+                          卡片
+                        </button>
+                        <button
+                          aria-pressed={graph}
+                          onClick={() => setGraph(true)}
+                        >
+                          逻辑图
+                        </button>
+                        <button
+                          aria-pressed={tab === "relation" && !graph}
+                          onClick={() => {
+                            setGraph(false);
+                            void switchTab("relation");
+                          }}
+                        >
+                          关系
+                        </button>
+                      </>
+                    ) : (
+                      topicSections[activeSection]?.kinds.map((k) => (
+                        <button
+                          key={k}
+                          aria-pressed={tab === k}
+                          onClick={() => void switchTab(k)}
+                        >
+                          {
+                            (
+                              {
+                                record: "原始想法",
+                                card: "卡片",
+                                relation: "关系",
+                                question: "问题",
+                                task: "任务",
+                                event: "事件",
+                                evidence: "证据",
+                                validation: "验证",
+                                review: "复盘",
+                                topic: "主题",
+                              } as Record<Kind, string>
+                            )[k]
+                          }
+                        </button>
+                      ))
+                    )}
+                  </div>
+                  <div className="bar">
                     <button
-                      key={k}
-                      aria-pressed={tab === k}
-                      onClick={() => void switchTab(k)}
+                      className="primary"
+                      onClick={() => add(graph ? "card" : tab)}
                     >
-                      {titles[k]}
+                      <PlusIcon />
+                      新建{kindLabels[graph ? "card" : tab]}
+                    </button>
+                    {activeSection === 1 && (
+                      <button onClick={() => add("relation")}>建立关系</button>
+                    )}
+                    {selectBar()}
+                    {activeSection === 1 && (
+                      <Menu
+                        label="整理操作"
+                        actions={[
+                          {
+                            label: "撤销最近拆分或合并",
+                            action: () =>
+                              void work(async () => {
+                                const ops =
+                                  await api<{ id: string; undone: number }[]>(
+                                    "operations",
+                                  );
+                                const last = ops.find((e) => !e.undone);
+                                if (!last)
+                                  throw new Error("没有可撤销的拆分或合并。");
+                                await api("operations/" + last.id, "POST", {});
+                              }, "已恢复拆分或合并前的内容"),
+                          },
+                        ]}
+                      />
+                    )}
+                  </div>
+                </div>
+                <h2 className="content-kind">
+                  {graph ? "逻辑图" : kindLabels[tab]}
+                </h2>
+                {tab === "review" && (
+                  <div className="judgment-summary">
+                    <span>当前判断</span>
+                    <p>
+                      {String(
+                        scoped
+                          .filter((e) => e.kind === "review")
+                          .sort((a, b) =>
+                            b.updatedAt.localeCompare(a.updatedAt),
+                          )[0]?.data.judgment || "还没有记录当前判断。",
+                      )}
+                    </p>
+                  </div>
+                )}
+                {graph ? (
+                  <Graph items={scoped} onOpen={openDetail} />
+                ) : (
+                  list(scoped.filter((e) => e.kind === tab))
+                )}
+              </section>
+            </>
+          )}
+          {page === "待思考" && (
+            <>
+              <div className="toolbar">
+                <button className="primary" onClick={() => add("question")}>
+                  <PlusIcon />
+                  新建问题
+                </button>
+                <select
+                  aria-label="问题状态"
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                >
+                  {["全部", ...states.question!].map((v) => (
+                    <option key={v}>{v}</option>
+                  ))}
+                </select>
+                {archives}
+              </div>
+              {list(
+                visible.filter((e) => e.kind === "question"),
+                false,
+                "没有待思考问题，遇到疑问时可以直接记下来。",
+              )}
+            </>
+          )}
+          {page === "待办与事件" && (
+            <>
+              <div className="toolbar">
+                <button className="primary" onClick={() => add("task")}>
+                  <PlusIcon />
+                  新建任务
+                </button>
+                <button onClick={() => add("event")}>新建事件</button>
+                <div className="segmented">
+                  {["今日", "本周", "逾期", "全部"].map((v) => (
+                    <button
+                      key={v}
+                      aria-pressed={filter === v}
+                      onClick={() => setFilter(v)}
+                    >
+                      {v}
                     </button>
                   ))}
                 </div>
-                <div className="bar">
-                  <button onClick={() => add(tab as Kind)}>
-                    新增{titles[tab as Kind]}
-                  </button>
-                  {["card", "relation"].includes(tab) && (
-                    <>
-                      <button onClick={() => setGraph(!graph)}>
-                        {graph ? "列表 / 大纲" : "逻辑图"}
-                      </button>
-                      <button onClick={() => add("relation")}>
-                        建立多前提关系
-                      </button>
-                      <button
-                        onClick={() =>
-                          void work(async () => {
-                            const ops =
-                              await api<{ id: string; undone: number }[]>(
-                                "operations",
-                              );
-                            const op = ops.find((x) => !x.undone);
-                            if (!op) throw new Error("没有可撤销的拆分或合并");
-                            await api("operations/" + op.id, "POST", {});
-                          }, "已撤销拆分或合并，恢复原关联")
-                        }
-                      >
-                        撤销最近拆分 / 合并
-                      </button>
-                    </>
-                  )}
-                  {tab === "card" &&
-                    selected.filter(
-                      (id) => scoped.find((x) => x.id === id)?.kind === "card",
-                    ).length > 1 && (
-                      <button
-                        onClick={() =>
-                          void work(() => {
-                            const cards = scoped.filter(
-                              (x) =>
-                                selected.includes(x.id) && x.kind === "card",
-                            );
-                            return api("transform", "POST", {
-                              ids: cards.map((x) => x.id),
-                              versions: Object.fromEntries(
-                                cards.map((x) => [x.id, x.version]),
-                              ),
-                              parts: null,
-                            });
-                          }, "卡片已合并，引用和来源已保留")
-                        }
-                      >
-                        合并选中卡片
-                      </button>
-                    )}
-                </div>
-                {graph && ["card", "relation"].includes(tab) ? (
-                  <Graph items={scoped} onOpen={open} />
-                ) : (
-                  rows(scoped.filter((x) => x.kind === tab))
-                )}
-                {!scoped.some((x) => x.kind === tab) && (
-                  <p className="panel muted">
-                    这里还没有{titles[tab as Kind]}，可手动新增。
-                  </p>
-                )}
-              </section>
-              {aiPanel}
-            </div>
-          </>
-        )}
-        {page === "待思考" && (
-          <>
-            <div className="bar">
-              <button onClick={() => add("question")}>新建问题</button>
-              <select
-                style={{ width: 180 }}
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-              >
-                {["全部", ...states.question!].map((x) => (
-                  <option key={x}>{x}</option>
-                ))}
-              </select>
-            </div>
-            {rows(visible.filter((x) => x.kind === "question"))}
-          </>
-        )}
-        {page === "待办与事件" && (
-          <>
-            <div className="bar">
-              <button onClick={() => add("task")}>新建任务 / 验证任务</button>
-              <button onClick={() => add("event")}>新建事件</button>
-              {["今日", "本周", "逾期", "全部"].map((f) => (
-                <button
-                  key={f}
-                  aria-pressed={filter === f}
-                  onClick={() => setFilter(f)}
+                <select
+                  aria-label="事项状态"
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
                 >
-                  {f}
-                </button>
-              ))}
-              <select
-                style={{ width: 160 }}
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-              >
-                {["全部", ...new Set([...states.task!, ...states.event!])].map(
-                  (x) => (
-                    <option key={x}>{x}</option>
-                  ),
-                )}
-              </select>
-            </div>
-            {rows(
-              visible.filter(
-                (x) => ["task", "event"].includes(x.kind) && dateMatch(x),
-              ),
-            )}
-          </>
-        )}
-        {page === "搜索" && (
-          <>
-            <label>
-              <span>按标题、内容、标签、状态、主题搜索</span>
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </label>
-            {rows(
-              alive.filter(
-                (x) =>
-                  JSON.stringify(x.data).includes(search) ||
-                  String(
-                    alive.find((t) => t.id === x.topic)?.data.title || "",
-                  ).includes(search),
-              ),
-            )}
-          </>
-        )}
-        {page === "回收站" && (
-          <>
-            <p className="panel muted">
-              软删除数据无限期保留，直到删除账号。删除主题后先恢复主题，再恢复所属项目。失效关系与历史不被静默清除。
-            </p>
-            {rows(trash)}
-          </>
-        )}
-        {page === "设置" && (
-          <>
-            <section className="panel">
-              <h2>账号与偏好</h2>
-              <p>{user.email} · 内容默认私人</p>
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const data = new FormData(e.currentTarget);
-                  void work(() =>
-                    api("settings", "PATCH", {
-                      timezone: data.get("timezone"),
-                      reminders: data.get("reminders") === "on",
-                    }),
-                  );
-                }}
-              >
-                <label>
-                  <span>时区</span>
-                  <input
-                    name="timezone"
-                    defaultValue={user.settings.timezone}
-                    placeholder="Asia/Shanghai"
-                  />
-                </label>
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    name="reminders"
-                    defaultChecked={user.settings.reminders}
-                  />
-                  <span>启用工具内日期提醒（不包含关闭网页后的通知）</span>
-                </label>
-                <button>保存设置</button>
-              </form>
-            </section>
-            <section className="panel">
-              <h2>导出、恢复与数据删除</h2>
-              <div className="bar">
-                <a download href="/api/export?format=md">
-                  导出 Markdown
-                </a>
-                <a download href="/api/export">
-                  JSON个人备份
-                </a>
+                  {[
+                    "全部",
+                    ...new Set([...states.task!, ...states.event!]),
+                  ].map((v) => (
+                    <option key={v}>{v}</option>
+                  ))}
+                </select>
+                {archives}
               </div>
-              <label>
-                <span>
-                  从JSON备份恢复（最多2MB，事务内导入，冲突编号重映射）
-                </span>
+              {list(
+                visible.filter(
+                  (e) =>
+                    ["task", "event"].includes(e.kind) &&
+                    matchesDate(e, filter, today),
+                ),
+                false,
+                "这里没有对应的任务或事件。",
+              )}
+            </>
+          )}
+          {page === "搜索" && (
+            <>
+              <label className="search-input search-page">
+                <MagnifyingGlassIcon />
                 <input
-                  type="file"
-                  accept="application/json,.json"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    if (file.size > 2 * 1024 * 1024) {
-                      setError("文件超过2MB");
-                      return;
-                    }
-                    void work(
-                      async () =>
-                        api("import", "POST", JSON.parse(await file.text())),
-                      "备份已导入；现有数据未覆盖",
-                    );
-                  }}
+                  autoFocus
+                  aria-label="搜索全部内容"
+                  placeholder="搜索标题、正文、标签、状态或主题"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
                 />
               </label>
-              <p className="muted">
-                个人JSON不替代服务端数据库备份。回收站无限期保留；恢复入口在侧栏。
-              </p>
-              <button
-                onClick={() => {
-                  const password = prompt(
-                    "永久删除账号及全部数据。请输入账号密码确认",
-                  );
-                  if (password)
-                    void work(async () => {
-                      await api("account", "DELETE", { password });
-                      setUser(null);
-                      setItems([]);
-                    }, "账号已删除");
-                }}
-              >
-                删除账号及全部数据
-              </button>
-            </section>
-            <section className="panel">
-              <h2>AI配置、额度与用量</h2>
-              <p>
-                {user.aiConfigured ? "已配置，实际调用质量待验证" : "AI未配置"}
-              </p>
-              <p className="muted">
-                密钥仅在服务器环境设置。默认不使用模拟结果。
-              </p>
-              <pre>{JSON.stringify(user.usage, null, 2)}</pre>
-            </section>
-          </>
-        )}
-        {!["首页", "主题详情", "设置", "回收站"].includes(page) &&
-          !alive.length && (
-            <p className="panel muted">还没有内容，从快速记录开始。</p>
+              {search.trim() ? (
+                list(
+                  alive.filter(
+                    (e) =>
+                      JSON.stringify(e.data)
+                        .toLowerCase()
+                        .includes(search.toLowerCase()) ||
+                      String(
+                        alive.find((t) => t.id === e.topic)?.data.title || "",
+                      )
+                        .toLowerCase()
+                        .includes(search.toLowerCase()),
+                  ),
+                  false,
+                  "没有匹配内容，换一个关键词试试。",
+                )
+              ) : (
+                <p className="empty-state">输入关键词，找到想继续的内容。</p>
+              )}
+            </>
           )}
-      </main>
+          {page === "回收站" && (
+            <>
+              <p className="muted page-intro">
+                删除的内容保留在这里。恢复主题后，可继续恢复所属内容。
+              </p>
+              {list(
+                items.filter((e) => e.deletedAt),
+                false,
+                "回收站是空的。",
+              )}
+            </>
+          )}
+          {page === "设置" && (
+            <Settings
+              user={user}
+              busy={busy}
+              onSave={(data) => work(() => api("settings", "PATCH", data))}
+              onImport={(data) =>
+                work(
+                  () => api("import", "POST", data),
+                  "备份已恢复，现有内容保持保留。",
+                )
+              }
+              onDelete={(password) =>
+                work(async () => {
+                  await api("account", "DELETE", { password });
+                  setUser(null);
+                  setItems([]);
+                }, "账号已删除")
+              }
+              onGuide={() => setGuide(true)}
+            />
+          )}
+        </main>
+      </div>
+      {mobileNav && (
+        <Modal title="导航" drawer onClose={() => setMobileNav(false)}>
+          <div className="mobile-navigation">{navigation}</div>
+        </Modal>
+      )}
+      {detail && (
+        <EntityDetail
+          entity={items.find((e) => e.id === detail.id) || detail}
+          items={items}
+          zone={zone}
+          onClose={() => setDetail(null)}
+          onEdit={() =>
+            openEdit(items.find((e) => e.id === detail.id) || detail)
+          }
+          onHistory={() => void openHistory(detail)}
+          onJump={jump}
+        />
+      )}
+      {aiOpen && t && (
+        <AIAssistant
+          error={error}
+          analyses={analyses}
+          scope={inputScope}
+          selection={selecting}
+          selectedCount={selectedScoped.length}
+          configured={user.aiConfigured}
+          busy={busy}
+          zone={zone}
+          onClose={() => setAiOpen(false)}
+          onGuide={() => setGuide(true)}
+          onAnalyze={analyze}
+          onSuggestion={(s, a, k) => void suggest(s, a, k)}
+          onIgnore={(s) =>
+            setFeedback({
+              analysisId: null,
+              suggestionId: s.id,
+              rating: "部分有用",
+              comment: "",
+            })
+          }
+          onFeedback={(a) =>
+            setFeedback({ analysisId: a.id, rating: "部分有用", comment: "" })
+          }
+        />
+      )}
       {edit && (
         <Editor
-          key={edit.entity?.id || edit.suggestion || edit.kind}
+          key={
+            edit.entity?.id || edit.suggestion || edit.kind + ":" + edit.topic
+          }
           request={edit}
           items={alive}
           userId={user.id}
@@ -1377,70 +1377,155 @@ export default function Workspace() {
         />
       )}
       {history && (
-        <div className="overlay">
-          <section className="dialog" role="dialog" aria-modal="true">
-            <h2>历史版本 · {name(history.entity).slice(0, 40)}</h2>
-            {history.versions.length === 0 && <p>尚无修改历史。</p>}
-            {history.versions.map((v) => (
-              <div className="panel" key={v.version}>
-                <h3>
-                  版本 {v.version} · {v.created_at}
-                </h3>
-                <pre>{JSON.stringify(v.snapshot.data, null, 2)}</pre>
-                <button
-                  onClick={() =>
-                    void work(async () => {
-                      const current = items.find(
-                        (x) => x.id === history.entity.id,
-                      )!;
-                      await api("entities/" + current.id + "/undo", "POST", {
-                        version: current.version,
-                        targetVersion: v.version,
-                      });
-                      setHistory(null);
-                    }, "已恢复历史内容，并保留新版本")
-                  }
-                >
-                  恢复此版本（撤销）
-                </button>
+        <Modal
+          title="历史版本"
+          onClose={() => setHistory(null)}
+          description={entityName(history.entity)}
+        >
+          {!history.versions.length && (
+            <p className="empty-state">尚未修改过这条内容。</p>
+          )}
+          {history.versions.map((v) => (
+            <section className="history-entry" key={v.version}>
+              <div className="section-heading">
+                <h3>{readableTime(v.created_at, zone, true)}</h3>
+                <span className="muted">修改前的记录</span>
               </div>
-            ))}
-            <button onClick={() => setHistory(null)}>关闭</button>
-          </section>
-        </div>
+              <RecordFields
+                entity={v.snapshot}
+                items={items}
+                zone={zone}
+                onJump={jump}
+              />
+              <details className="disclosure">
+                <summary>高级查看</summary>
+                <pre>{JSON.stringify(v.snapshot.data, null, 2)}</pre>
+              </details>
+              <button
+                disabled={Boolean(history.entity.deletedAt) || busy}
+                onClick={() =>
+                  void work(async () => {
+                    const current = items.find(
+                      (e) => e.id === history.entity.id,
+                    )!;
+                    await api("entities/" + current.id + "/undo", "POST", {
+                      version: current.version,
+                      targetVersion: v.version,
+                    });
+                    setHistory(null);
+                  }, "已恢复这个版本，后续历史仍保留。")
+                }
+              >
+                恢复此版本
+              </button>
+            </section>
+          ))}
+        </Modal>
       )}
       {split && (
-        <div className="overlay">
-          <section className="dialog" role="dialog" aria-modal="true">
-            <h2>拆分卡片</h2>
-            <p>用空行分隔两段或更多内容。来源保留，关系与任务引用同步处理。</p>
+        <Modal title="拆分卡片" onClose={() => setSplit(null)}>
+          <p className="muted">
+            用空行分隔两段或更多内容。来源和关联会继续保留。
+          </p>
+          <label>
+            <span>拆分内容</span>
             <textarea
-              style={{ minHeight: 240 }}
+              rows={9}
               value={splitText}
               onChange={(e) => setSplitText(e.target.value)}
             />
-            <div className="bar">
-              <button
-                onClick={() =>
-                  void work(async () => {
-                    await api("transform", "POST", {
-                      ids: [split.id],
-                      versions: { [split.id]: split.version },
-                      parts: splitText
-                        .split(/\n\s*\n/)
-                        .map((x) => x.trim())
-                        .filter(Boolean),
-                    });
-                    setSplit(null);
-                  }, "拆分完成")
+          </label>
+          <footer className="modal-actions">
+            <button onClick={() => setSplit(null)}>关闭</button>
+            <button
+              className="primary"
+              disabled={busy}
+              onClick={() =>
+                void work(async () => {
+                  await api("transform", "POST", {
+                    ids: [split.id],
+                    versions: { [split.id]: split.version },
+                    parts: splitText
+                      .split(/\n\s*\n/)
+                      .map((v) => v.trim())
+                      .filter(Boolean),
+                  });
+                  setSplit(null);
+                }, "已拆分卡片")
+              }
+            >
+              保存拆分
+            </button>
+          </footer>
+        </Modal>
+      )}
+      {feedback && (
+        <Modal
+          title={feedback.suggestionId ? "忽略建议" : "分析反馈"}
+          onClose={() => setFeedback(null)}
+        >
+          {!feedback.suggestionId && (
+            <label>
+              <span>这次分析有帮助吗？</span>
+              <select
+                value={feedback.rating}
+                onChange={(e) =>
+                  setFeedback({ ...feedback, rating: e.target.value })
                 }
               >
-                确认拆分
-              </button>
-              <button onClick={() => setSplit(null)}>取消</button>
-            </div>
-          </section>
-        </div>
+                {["有用", "部分有用", "无用"].map((v) => (
+                  <option key={v}>{v}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label>
+            <span>补充说明（可选）</span>
+            <textarea
+              value={feedback.comment}
+              onChange={(e) =>
+                setFeedback({ ...feedback, comment: e.target.value })
+              }
+            />
+          </label>
+          <button
+            className="primary"
+            disabled={busy}
+            onClick={() =>
+              void work(async () => {
+                if (feedback.suggestionId)
+                  await api("suggestions/" + feedback.suggestionId, "POST", {
+                    action: "ignore",
+                    feedback: feedback.comment,
+                  });
+                else
+                  await api("feedback", "POST", {
+                    analysisId: feedback.analysisId,
+                    rating: feedback.rating,
+                    comment: feedback.comment,
+                  });
+                setFeedback(null);
+              }, "反馈已保存")
+            }
+          >
+            保存
+          </button>
+        </Modal>
+      )}
+      {guide && (
+        <Modal title="AI配置说明" onClose={() => setGuide(false)}>
+          <p>
+            在运行此工具的服务器环境中配置 DeepSeek 密钥，然后重新启动应用。
+          </p>
+          <p>
+            使用环境变量 <code>DEEPSEEK_API_KEY</code>，服务地址和模型分别由{" "}
+            <code>DEEPSEEK_BASE_URL</code>、<code>DEEPSEEK_MODEL</code>{" "}
+            配置。此页面不收集密钥。
+          </p>
+          <p className="muted">
+            未配置时，记录、卡片、关系、问题、任务、证据与复盘都可以正常使用。
+          </p>
+        </Modal>
       )}
     </div>
   );

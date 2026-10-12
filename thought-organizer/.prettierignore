@@ -4,3 +4,5 @@ data
 backups
 package-lock.json
 next-env.d.ts
+
+.next-ui
