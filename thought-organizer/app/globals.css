@@ -1,0 +1,271 @@
+@import "tailwindcss";
+:root {
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  color: #25352e;
+  background: #f5f7f3;
+}
+* {
+  box-sizing: border-box;
+}
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+button {
+  cursor: pointer;
+  border: 1px solid #cad6ce;
+  border-radius: 8px;
+  padding: 7px 12px;
+  background: white;
+  color: #244e3a;
+}
+button:hover {
+  background: #e8f0e8;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+input,
+select,
+textarea {
+  width: 100%;
+  padding: 9px;
+  border: 1px solid #cad6ce;
+  border-radius: 8px;
+  background: white;
+}
+textarea {
+  min-height: 80px;
+}
+label {
+  display: block;
+  font-size: 13px;
+  color: #53685a;
+  margin: 10px 0;
+}
+label span {
+  display: block;
+  margin-bottom: 5px;
+}
+h1 {
+  font-size: 26px;
+  font-weight: 650;
+}
+h2 {
+  font-size: 19px;
+  font-weight: 600;
+}
+h3 {
+  font-size: 16px;
+  font-weight: 600;
+}
+p {
+  line-height: 1.7;
+}
+a {
+  color: #236a44;
+  text-decoration: underline;
+}
+.shell {
+  max-width: 1440px;
+  margin: auto;
+  display: grid;
+  grid-template-columns: 190px 1fr;
+  min-height: 100vh;
+}
+.nav {
+  padding: 24px 16px;
+  border-right: 1px solid #dde5dc;
+  background: #edf2e9;
+}
+.nav button {
+  width: 100%;
+  text-align: left;
+  margin-top: 9px;
+}
+.main {
+  padding: 28px;
+  min-width: 0;
+}
+.bar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 14px 0;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+.panel,
+.item {
+  background: white;
+  border: 1px solid #dce5dd;
+  border-radius: 12px;
+  padding: 18px;
+  margin-bottom: 14px;
+}
+.item p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.muted {
+  color: #687a6d;
+  font-size: 13px;
+}
+.alert {
+  padding: 12px;
+  background: #fff4d6;
+  border: 1px solid #e2bd69;
+  border-radius: 8px;
+  margin: 10px 0;
+}
+.error {
+  background: #ffeae5;
+  border-color: #d9a89f;
+}
+.primary {
+  background: #285f43;
+  color: white;
+}
+.primary:hover {
+  background: #17462e;
+}
+.tabs button[aria-pressed="true"],
+.nav button[aria-pressed="true"] {
+  background: #dceadb;
+  border-color: #739978;
+}
+.detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 20px;
+}
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: #182d2680;
+  display: grid;
+  place-items: center;
+  z-index: 20;
+  padding: 16px;
+}
+.dialog {
+  background: #f8faf7;
+  border-radius: 14px;
+  padding: 24px;
+  max-width: 740px;
+  width: 100%;
+  max-height: 90vh;
+  overflow: auto;
+}
+.dialog h2 {
+  position: sticky;
+  top: -24px;
+  background: #f8faf7;
+  padding: 12px 0;
+}
+.fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 16px;
+}
+.wide {
+  grid-column: 1/-1;
+}
+.graph {
+  width: 100%;
+  overflow: auto;
+  border: 1px solid #dde5dc;
+  border-radius: 12px;
+  background: #f9fbf7;
+}
+.graph svg {
+  display: block;
+}
+.badge {
+  display: inline-block;
+  font-size: 12px;
+  background: #edf3eb;
+  border-radius: 5px;
+  padding: 3px 7px;
+  margin-right: 5px;
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.check input {
+  width: auto;
+}
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+summary {
+  cursor: pointer;
+  color: #2e674a;
+}
+.login {
+  max-width: 440px;
+  margin: 10vh auto;
+  padding: 30px;
+}
+.toast {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.tag {
+  font-size: 12px;
+  color: #658267;
+}
+.subtle {
+  font-size: 12px;
+  padding: 4px 8px;
+}
+details p {
+  font-size: 14px;
+}
+@media (max-width: 900px) {
+  .detail {
+    grid-template-columns: 1fr;
+  }
+  .shell {
+    grid-template-columns: 1fr;
+  }
+  .nav {
+    border-right: 0;
+    padding: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .nav h2 {
+    width: 100%;
+  }
+  .nav button {
+    width: auto;
+    margin: 0;
+  }
+  .main {
+    padding: 16px;
+  }
+  .fields {
+    grid-template-columns: 1fr;
+  }
+  .dialog {
+    padding: 16px;
+  }
+}

@@ -1,0 +1,6 @@
+node_modules
+.next
+data
+backups
+package-lock.json
+next-env.d.ts
