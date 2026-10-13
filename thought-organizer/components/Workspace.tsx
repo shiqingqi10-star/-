@@ -1,8 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  HomeIcon,
-  ArchiveIcon,
   ReaderIcon,
   QuestionMarkCircledIcon,
   CalendarIcon,
@@ -30,17 +28,21 @@ import {
 import {
   entityName,
   kindLabels,
-  topicSections,
-  sectionFor,
   rememberedKind,
-  recentTopics,
   focusItems,
   matchesDate,
   finished,
   readableTime,
 } from "@/lib/presentation";
 import Editor, { EditRequest } from "./Editor";
-import Graph from "./Graph";
+import ThinkingSpace from "./ThinkingSpace";
+import ThinkingChanges from "./ThinkingChanges";
+import {
+  thinkingScope,
+  recentThoughts,
+  thinkingUpdatedAt,
+  shortName,
+} from "@/lib/thinking";
 import EntityList from "./EntityList";
 import EntityDetail, { RecordFields } from "./EntityDetail";
 import AIAssistant, { Analysis, Suggestion } from "./AIAssistant";
@@ -63,17 +65,15 @@ async function api<T = unknown>(
   return data;
 }
 const nav = [
-  { name: "首页", icon: HomeIcon },
-  { name: "收集箱", icon: ArchiveIcon },
-  { name: "我的主题", icon: ReaderIcon },
-  { name: "待思考", icon: QuestionMarkCircledIcon },
-  { name: "待办与事件", icon: CalendarIcon },
+  { name: "我的思考", icon: ReaderIcon },
+  { name: "待想清楚", icon: QuestionMarkCircledIcon },
+  { name: "下一步", icon: CalendarIcon },
 ];
 export default function Workspace() {
   const [user, setUser] = useState<User | null>(null),
     [loading, setLoading] = useState(true),
     [items, setItems] = useState<Entity[]>([]),
-    [page, setPage] = useState("首页"),
+    [page, setPage] = useState("我的思考"),
     [topic, setTopic] = useState<string | null>(null),
     [tab, setTab] = useState<Kind>("card"),
     [graph, setGraph] = useState(false),
@@ -94,6 +94,9 @@ export default function Workspace() {
     [guide, setGuide] = useState(false),
     [quick, setQuick] = useState(""),
     [mobileNav, setMobileNav] = useState(false),
+    [changesOpen, setChangesOpen] = useState(false),
+    [priorityFilter, setPriorityFilter] = useState("全部"),
+    [quickState, setQuickState] = useState(""),
     [history, setHistory] = useState<{
       entity: Entity;
       versions: { version: number; snapshot: Entity; created_at: string }[];
@@ -128,6 +131,22 @@ export default function Workspace() {
         setUser(u);
         setItems(rows);
         try {
+          const location = JSON.parse(
+            localStorage.getItem("thought-location:" + u.id) || "null",
+          );
+          const root = rows.find(
+            (e) =>
+              e.id === location?.root &&
+              !e.deletedAt &&
+              (e.kind === "topic" || (e.kind === "record" && !e.topic)),
+          );
+          if (root) {
+            setTopic(root.id);
+            setPage("思考空间");
+            setTab(rememberedKind(root.data.lastPosition || location.tab));
+          }
+        } catch {}
+        try {
           const value =
             localStorage.getItem("thought-draft:" + u.id + ":quick") || "";
           setQuick(value);
@@ -139,10 +158,18 @@ export default function Workspace() {
   }, []);
   useEffect(() => {
     if (!user || !topic) return;
+    const root = items.find((e) => e.id === topic);
+    if (!root || root.deletedAt) return;
     let current = true;
-    api<Analysis[]>("analyses?topic=" + topic)
+    const query = root.kind === "topic" ? "?topic=" + root.id : "";
+    api<Analysis[]>("analyses" + query)
       .then((rows) => {
-        if (current) setAnalyses(rows);
+        if (current)
+          setAnalyses(
+            root.kind === "topic"
+              ? rows
+              : rows.filter((a) => a.snapshot.some((e) => e.id === root.id)),
+          );
       })
       .catch((e) => {
         if (current) setError(e.message);
@@ -150,16 +177,29 @@ export default function Workspace() {
     return () => {
       current = false;
     };
-  }, [topic, user]);
+  }, [topic, user, items]);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(""), 6500);
+    return () => clearTimeout(timer);
+  }, [notice]);
   const alive = items.filter((e) => !e.deletedAt),
     zone = user?.settings.timezone || "Asia/Shanghai",
     today = dateInZone(new Date(), zone),
     t = alive.find((e) => e.id === topic),
-    scoped = alive.filter((e) => e.topic === topic),
+    scoped = t ? thinkingScope(alive, t).filter((e) => e.kind !== "topic") : [],
     selectedScoped = selected.filter((id) => scoped.some((e) => e.id === id));
   const inputScope =
-    topic && t
-      ? selectScope(alive, topic, selecting ? selectedScoped : [])
+    t && !(selecting && !selectedScoped.length)
+      ? selectScope(
+          alive,
+          t.kind === "topic" ? t.id : null,
+          selecting
+            ? selectedScoped
+            : t.kind === "record"
+              ? scoped.map((e) => e.id)
+              : [],
+        )
       : [];
   async function work(fn: () => Promise<unknown>, message = "已保存") {
     setBusy(true);
@@ -183,6 +223,11 @@ export default function Workspace() {
   }
   function navigate(next: string) {
     setPage(next);
+    if (user)
+      try {
+        localStorage.removeItem("thought-location:" + user.id);
+      } catch {}
+    setPriorityFilter("全部");
     setTopic(null);
     setSelected([]);
     setSelecting(false);
@@ -196,7 +241,17 @@ export default function Workspace() {
   }
   function openTopic(e: Entity) {
     setTopic(e.id);
-    setPage("主题详情");
+    setPage("思考空间");
+    if (user)
+      try {
+        localStorage.setItem(
+          "thought-location:" + user.id,
+          JSON.stringify({
+            root: e.id,
+            tab: rememberedKind(e.data.lastPosition),
+          }),
+        );
+      } catch {}
     setTab(rememberedKind(e.data.lastPosition));
     setGraph(false);
     setSelected([]);
@@ -206,7 +261,10 @@ export default function Workspace() {
     setMobileNav(false);
   }
   function openDetail(e: Entity) {
-    if (e.kind === "topic" && !e.deletedAt) {
+    if (
+      (e.kind === "topic" || (e.kind === "record" && !e.topic)) &&
+      !e.deletedAt
+    ) {
       openTopic(e);
       return;
     }
@@ -217,7 +275,26 @@ export default function Workspace() {
     setEdit({ kind: e.kind, entity: e, topic: e.topic });
   }
   function add(kind: Kind, data?: Record<string, unknown>) {
-    setEdit({ kind, topic: page === "主题详情" ? topic : null, data });
+    const root = page === "思考空间" ? t : undefined;
+    const initial: Record<string, unknown> =
+      kind === "card"
+        ? {
+            type: "观点或推断",
+            source: "用户陈述",
+            verification: "未核实",
+            ...(root?.kind === "record" ? { sourceRefs: [root.id] } : {}),
+          }
+        : kind === "question" && root?.kind === "record"
+          ? { refs: [root.id] }
+          : {};
+    setEdit({
+      kind,
+      topic: root?.kind === "topic" ? root.id : null,
+      data: { ...initial, ...data },
+      ...(root?.kind === "record"
+        ? { rootId: root.id, rootVersion: root.version }
+        : {}),
+    });
   }
   function jump(e: Entity) {
     setDetail(null);
@@ -227,7 +304,7 @@ export default function Workspace() {
       setDetail(e);
       return;
     }
-    if (e.kind === "topic") {
+    if (e.kind === "topic" || (e.kind === "record" && !e.topic)) {
       openTopic(e);
       return;
     }
@@ -240,23 +317,42 @@ export default function Workspace() {
         return;
       }
     }
+    const root = alive.find(
+      (x) =>
+        x.kind === "record" &&
+        !x.topic &&
+        thinkingScope(alive, x).some((child) => child.id === e.id),
+    );
+    if (root) {
+      openTopic(root);
+      setTab(e.kind);
+      setDetail(e);
+      return;
+    }
     navigate(
       e.kind === "question"
-        ? "待思考"
+        ? "待想清楚"
         : ["task", "event"].includes(e.kind)
-          ? "待办与事件"
-          : "收集箱",
+          ? "下一步"
+          : "未整理",
     );
     setDetail(e);
   }
   async function switchTab(kind: Kind) {
     setTab(kind);
+    if (user && topic)
+      try {
+        localStorage.setItem(
+          "thought-location:" + user.id,
+          JSON.stringify({ root: topic, tab: kind }),
+        );
+      } catch {}
     const current = items.find((e) => e.id === topic);
     if (current && current.data.lastPosition !== kind) {
       try {
         const saved = await api<Entity>("entities/" + current.id, "PATCH", {
           data: { ...current.data, lastPosition: kind },
-          topic: null,
+          topic: current.topic,
           version: current.version,
         });
         setItems((rows) => rows.map((e) => (e.id === saved.id ? saved : e)));
@@ -296,7 +392,7 @@ export default function Workspace() {
     )
       return;
     await api("entities/" + e.id, "DELETE", { version: e.version });
-    if (e.id === topic) navigate("我的主题");
+    if (e.id === topic) navigate("全部思考");
   }
   async function openHistory(e: Entity) {
     await work(async () => {
@@ -335,6 +431,8 @@ export default function Workspace() {
     ];
     if (e.kind === "card")
       rows.push(
+        { label: "补充依据", action: () => supplement("evidence", e) },
+        { label: "看看下一步", action: () => supplement("task", e) },
         {
           label: "拆分",
           action: () => {
@@ -347,9 +445,8 @@ export default function Workspace() {
           action: () => void patch(e, { collapsed: !e.data.collapsed }),
         },
         {
-          label: "转为待思考问题",
-          action: () =>
-            add("question", { title: String(e.data.content), refs: [e.id] }),
+          label: "留下疑问",
+          action: () => supplement("question", e),
         },
       );
     rows.push(
@@ -366,6 +463,40 @@ export default function Workspace() {
     );
     return rows;
   }
+  function supplement(kind: "evidence" | "question" | "task", entity: Entity) {
+    setDetail(null);
+    const data: Record<string, unknown> =
+      kind === "evidence"
+        ? { supports: [entity.id], type: "访谈或反馈", status: "待核实" }
+        : kind === "question"
+          ? { refs: [entity.id] }
+          : entity.kind === "question"
+            ? { questionRefs: [entity.id] }
+            : {
+                type: entity.data.type === "假设" ? "验证任务" : "普通任务",
+                ...(entity.data.type === "假设"
+                  ? { hypothesisRefs: [entity.id] }
+                  : {}),
+              };
+    const root = entity.topic
+      ? alive.find((e) => e.id === entity.topic)
+      : t?.kind === "record" && scoped.some((e) => e.id === entity.id)
+        ? t
+        : alive.find(
+            (e) =>
+              e.kind === "record" &&
+              !e.topic &&
+              thinkingScope(alive, e).some((x) => x.id === entity.id),
+          );
+    setEdit({
+      kind,
+      topic: entity.topic,
+      data,
+      ...(root?.kind === "record"
+        ? { rootId: root.id, rootVersion: root.version }
+        : {}),
+    });
+  }
   async function save(
     data: Record<string, unknown>,
     target: string | null,
@@ -378,6 +509,15 @@ export default function Workspace() {
           action: "accept",
           kind: edit.kind,
           data,
+          ...(edit.rootId && !target
+            ? { recordId: edit.rootId, recordVersion: edit.rootVersion }
+            : {}),
+        });
+      else if (!edit.entity && edit.rootId && !target)
+        await api("thoughts/" + edit.rootId + "/items", "POST", {
+          kind: edit.kind,
+          data,
+          version: edit.rootVersion,
         });
       else
         await api(
@@ -390,13 +530,71 @@ export default function Workspace() {
             version: version ?? edit.entity?.version,
           },
         );
-      await refresh();
-      setNotice("已保存");
+      await refresh().catch(() =>
+        setError("内容已保存，但列表暂时无法更新。请刷新内容后继续。"),
+      );
+      setNotice(
+        edit.suggestion
+          ? "已保存采纳内容 · 保留AI来源与分析记录"
+          : edit.kind === "evidence" &&
+              (((data.supports as string[]) || []).length ||
+                ((data.opposes as string[]) || []).length)
+            ? "这个判断有了可追溯的依据。"
+            : edit.kind === "task" &&
+                ((data.questionRefs as string[]) || []).length
+              ? "这个疑问已经有了推进方法。"
+              : edit.kind === "review" && data.change && data.changeReason
+                ? "你留下了改变判断的理由。"
+                : edit.kind === "question" && !edit.entity
+                  ? "你留下了一个值得确认的问题。"
+                  : "已保存",
+      );
     } catch (e) {
       try {
         await refresh();
       } catch {}
       throw e;
+    }
+  }
+  async function saveQuick(organize: boolean) {
+    const content = quick;
+    if (!content.trim() || busy || !user) return;
+    setBusy(true);
+    setError("");
+    setQuickState("保存中…");
+    try {
+      const saved = await api<Entity>("entities", "POST", {
+        kind: "record",
+        topic: null,
+        data: {
+          content,
+          title: shortName(content),
+          status: organize ? "整理中" : "未整理",
+        },
+      });
+      setItems((rows) => [saved, ...rows.filter((e) => e.id !== saved.id)]);
+      if (quickRef.current === content) {
+        setQuick("");
+        quickRef.current = "";
+        try {
+          localStorage.removeItem("thought-draft:" + user.id + ":quick");
+        } catch {}
+        setQuickState("已保存");
+      } else setQuickState("本地草稿 · 尚未保存");
+      try {
+        await refresh();
+      } catch {
+        setError("想法已保存，但列表暂时无法更新。可以继续整理，或稍后刷新。");
+      }
+      setNotice(
+        organize ? "已保存，可以开始整理。" : "已保存到未整理，准备好再继续。",
+      );
+      if (organize) openTopic(saved);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "保存失败，请重试。");
+      setQuickState("保存失败 · 本地草稿仍保留");
+    } finally {
+      setBusy(false);
     }
   }
   async function suggest(s: Suggestion, a: Analysis, kind?: Kind) {
@@ -476,20 +674,40 @@ export default function Workspace() {
               criterion: d.criterion,
               status: "待开始",
             };
-    setEdit({ kind: k, topic: a.topic, suggestion: s.id, data });
+    setEdit({
+      kind: k,
+      topic: a.topic,
+      suggestion: s.id,
+      data,
+      ...(t?.kind === "record" && a.snapshot.some((e) => e.id === t.id)
+        ? { rootId: t.id, rootVersion: t.version }
+        : {}),
+    });
   }
   async function analyze(mode: string, answers: string) {
-    const target = topic;
-    if (!target) return;
+    if (!t) return;
+    const rootId = t.id,
+      target = t.kind === "topic" ? t.id : null;
     return work(async () => {
       await api("analyses", "POST", {
         topic: target,
-        ids: selecting ? selectedScoped : [],
+        ids: selecting
+          ? selectedScoped
+          : t.kind === "record"
+            ? scoped.map((e) => e.id)
+            : [],
         mode,
         answers,
       });
-      const results = await api<Analysis[]>("analyses?topic=" + target);
-      if (topicRef.current === target) setAnalyses(results);
+      const results = await api<Analysis[]>(
+        "analyses" + (target ? "?topic=" + target : ""),
+      );
+      if (topicRef.current === rootId)
+        setAnalyses(
+          target
+            ? results
+            : results.filter((a) => a.snapshot.some((e) => e.id === rootId)),
+        );
     }, "分析已保存，请确认需要采纳的建议。");
   }
   function choose(id: string) {
@@ -607,7 +825,7 @@ export default function Workspace() {
               });
               setPassword("");
               setRegister(false);
-              navigate("首页");
+              navigate("我的思考");
               const u = await api<User>("me");
               try {
                 const value =
@@ -658,7 +876,6 @@ export default function Workspace() {
       </main>
     );
   const inbox = alive.filter((e) => !e.topic && e.kind !== "topic"),
-    activeSection = sectionFor(tab),
     visible = alive.filter(
       (e) =>
         (showArchived || !e.data.archived) &&
@@ -675,14 +892,18 @@ export default function Workspace() {
           <button
             key={n.name}
             aria-label={n.name}
-            aria-current={page === n.name ? "page" : undefined}
+            aria-current={
+              page === n.name ||
+              (n.name === "下一步" && page === "今日关注") ||
+              (n.name === "我的思考" &&
+                ["全部思考", "未整理", "思考空间"].includes(page))
+                ? "page"
+                : undefined
+            }
             onClick={() => navigate(n.name)}
           >
             <n.icon />
             <span>{n.name}</span>
-            {n.name === "收集箱" && inbox.length > 0 && (
-              <small>{inbox.length}</small>
-            )}
           </button>
         ))}
       </nav>
@@ -740,8 +961,8 @@ export default function Workspace() {
               <HamburgerMenuIcon />
             </button>
             <span className="breadcrumb">
-              {page === "主题详情"
-                ? "我的主题 / " + String(t?.data.title || "主题")
+              {page === "思考空间"
+                ? "我的思考 / " + String(t ? entityName(t) : "思考")
                 : page}
             </span>
           </div>
@@ -789,19 +1010,21 @@ export default function Workspace() {
           )}
           <div className="page-heading">
             <div>
-              {page === "主题详情" && (
+              {page === "思考空间" && (
                 <button
                   className="text-button back-link"
-                  onClick={() => navigate("我的主题")}
+                  onClick={() => navigate("全部思考")}
                 >
                   <ArrowLeftIcon />
-                  所有主题
+                  返回我的思考
                 </button>
               )}
               <h1 tabIndex={-1}>
-                {page === "主题详情"
-                  ? String(t?.data.title || "主题已移入回收站")
-                  : page}
+                {page === "思考空间"
+                  ? String(t ? entityName(t) : "思考已移入回收站")
+                  : page === "我的思考"
+                    ? "有什么事情，你想理清楚？"
+                    : page}
               </h1>
               {page === "今日关注" && (
                 <>
@@ -812,37 +1035,64 @@ export default function Workspace() {
                   )}
                 </>
               )}
-              {page === "首页" && (
-                <p className="muted">留住想法，继续上次的思考。</p>
-              )}
             </div>
-            {page === "我的主题" && (
+            {page === "全部思考" && (
               <button className="primary" onClick={() => add("topic")}>
                 <PlusIcon />
-                新建主题
+                新建一个思考
               </button>
             )}
-            {page === "主题详情" && t && (
+            {page === "思考空间" && t && (
               <div className="bar">
                 <button onClick={() => setAiOpen(true)}>
                   <LightningBoltIcon />
                   AI助手
                 </button>
-                <Menu label="主题" actions={actions(t)} />
+                <Menu label="思考" actions={actions(t)} />
               </div>
             )}
           </div>
-          {page === "首页" && (
-            <div className="home-layout">
-              <section className="quick-record surface" aria-label="快速记录区">
-                <h2>快速记录</h2>
-                <p className="muted">先写下来，不用急着整理。</p>
+          {["全部思考", "未整理"].includes(page) && (
+            <div className="bar library-navigation">
+              <button
+                className="text-button"
+                onClick={() => navigate("我的思考")}
+              >
+                返回记录入口
+              </button>
+              <button
+                aria-pressed={page === "全部思考"}
+                onClick={() => {
+                  setSearch("");
+                  navigate("全部思考");
+                }}
+              >
+                全部思考
+              </button>
+              <button
+                aria-pressed={page === "未整理"}
+                onClick={() => navigate("未整理")}
+              >
+                未整理
+              </button>
+            </div>
+          )}
+          {page === "我的思考" && (
+            <div className="home-layout thinking-home">
+              <section
+                className="quick-record surface"
+                aria-label="记录一个思考"
+              >
+                <p className="muted">
+                  可以是一段想法、一个纠结，或者一件还没想明白的事。
+                </p>
                 <textarea
-                  aria-label="快速记录"
+                  aria-label="写下想法"
                   value={quick}
                   onChange={(e) => {
                     setQuick(e.target.value);
                     quickRef.current = e.target.value;
+                    setQuickState("");
                     try {
                       localStorage.setItem(
                         "thought-draft:" + user.id + ":quick",
@@ -852,154 +1102,141 @@ export default function Workspace() {
                       setError("无法保留本地草稿，请复制重要内容。");
                     }
                   }}
-                  placeholder="写下一个想法，或粘贴你的笔记和聊天…"
+                  placeholder="把此刻的想法写在这里…"
                 />
                 <div className="quick-footer">
-                  <span className="muted">
-                    {quick.trim()
-                      ? "本地草稿 · 尚未保存"
-                      : "文字会直接存入收集箱"}
+                  <span className="muted" role="status">
+                    {quickState ||
+                      (quick.trim()
+                        ? "本地草稿 · 尚未保存"
+                        : "只写内容就好，稍后再慢慢理清。")}
                   </span>
-                  <button
-                    className="primary"
-                    disabled={busy || !quick.trim()}
-                    onClick={() => {
-                      const content = quick;
-                      void work(async () => {
-                        await api("entities", "POST", {
-                          kind: "record",
-                          topic: null,
-                          data: { content, status: "未整理" },
-                        });
-                        if (quickRef.current === content) {
-                          setQuick("");
-                          quickRef.current = "";
-                          try {
-                            localStorage.removeItem(
-                              "thought-draft:" + user.id + ":quick",
-                            );
-                          } catch {}
-                        }
-                      }, "已保存到收集箱");
-                    }}
-                  >
-                    保存想法
-                  </button>
-                </div>
-              </section>
-              <section className="continue-section">
-                <div className="section-heading">
-                  <h2>继续整理</h2>
-                  <button
-                    className="text-button"
-                    onClick={() => navigate("我的主题")}
-                  >
-                    查看全部主题
-                    <ChevronRightIcon />
-                  </button>
-                </div>
-                {recentTopics(alive).length ? (
-                  list(recentTopics(alive), true)
-                ) : (
-                  <div className="empty-state">
-                    <p>把相关想法放进一个主题，下一次就能接着整理。</p>
-                    <button onClick={() => add("topic")}>
-                      <PlusIcon />
-                      新建主题
+                  <div className="bar">
+                    <button
+                      className="text-button"
+                      disabled={busy || !quick.trim()}
+                      onClick={() => void saveQuick(false)}
+                    >
+                      先存着
+                    </button>
+                    <button
+                      className="primary"
+                      disabled={busy || !quick.trim()}
+                      onClick={() => void saveQuick(true)}
+                    >
+                      {busy ? "保存中…" : "保存，开始整理"}
                     </button>
                   </div>
-                )}
+                </div>
+              </section>
+              {recentThoughts(alive).length > 0 && (
+                <section className="continue-section">
+                  <div className="section-heading">
+                    <h2>继续上次的思考</h2>
+                  </div>
+                  <div className="recent-thinking">
+                    {recentThoughts(alive).map((e) => (
+                      <button
+                        className="recent-thought"
+                        aria-label={entityName(e)}
+                        key={e.id}
+                        onClick={() => openTopic(e)}
+                      >
+                        <div>
+                          <strong>{entityName(e)}</strong>
+                          <p>
+                            {String(
+                              e.data.summary ||
+                                e.data.goal ||
+                                e.data.content ||
+                                "随时可以继续补充。",
+                            ).slice(0, 120)}
+                          </p>
+                          <span className="muted">
+                            更新于{" "}
+                            {readableTime(thinkingUpdatedAt(alive, e), zone)}
+                          </span>
+                        </div>
+                        <ChevronRightIcon />
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              )}
+              <div className="bar home-library-links">
+                <button
+                  className="text-button"
+                  onClick={() => {
+                    setSearch("");
+                    navigate("全部思考");
+                  }}
+                >
+                  查看全部思考
+                </button>
                 {inbox.length > 0 && (
                   <button
-                    className="inbox-shortcut"
-                    onClick={() => navigate("收集箱")}
-                  >
-                    <ArchiveIcon />
-                    收集箱还有 {inbox.length} 条内容待整理
-                    <ChevronRightIcon />
-                  </button>
-                )}
-              </section>
-              <section className="today-section">
-                <div className="section-heading">
-                  <h2>今日关注</h2>
-                  <button
                     className="text-button"
-                    onClick={() => navigate("今日关注")}
+                    onClick={() => navigate("未整理")}
                   >
-                    查看完整列表
-                    <ChevronRightIcon />
+                    未整理内容 · {inbox.length} 条
                   </button>
-                </div>
-                {list(
-                  focusItems(alive, today),
-                  false,
-                  "暂时没有需要关注的事项。在内容的“更多”中选择今日关注。",
                 )}
-              </section>
+              </div>
             </div>
           )}
-          {page === "我的主题" && (
+          {page === "全部思考" && (
             <>
               <div className="toolbar">
-                <div className="search-input">
+                <label className="search-input">
                   <MagnifyingGlassIcon />
                   <input
-                    aria-label="搜索主题"
-                    placeholder="搜索主题名称或标签"
+                    aria-label="搜索思考"
+                    placeholder="搜索思考内容或标签"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                   />
-                </div>
+                </label>
                 <select
-                  aria-label="主题阶段"
+                  aria-label="思考状态"
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
                 >
-                  {["全部", ...states.topic!].map((v) => (
-                    <option key={v}>{v}</option>
-                  ))}
+                  {["全部", ...states.topic!, "未整理", "整理中", "已整理"].map(
+                    (v) => (
+                      <option key={v}>{v}</option>
+                    ),
+                  )}
                 </select>
                 {archives}
               </div>
               {list(
                 visible.filter(
                   (e) =>
-                    e.kind === "topic" &&
+                    (e.kind === "topic" || (e.kind === "record" && !e.topic)) &&
                     JSON.stringify(e.data)
                       .toLowerCase()
                       .includes(search.toLowerCase()),
                 ),
                 true,
-                "还没有主题，点击“新建主题”开始。",
+                "还没有思考，先在记录入口写下一段想法。",
               )}
             </>
           )}
-          {page === "收集箱" && (
+          {page === "未整理" && (
             <>
               <p className="muted page-intro">
-                先收下还没想清楚的内容，准备好时再归入主题。
+                独立原文也可以直接开始整理，无需先创建主题。
               </p>
               <div className="toolbar">
                 <button className="primary" onClick={() => add("record")}>
-                  <PlusIcon />
-                  新建想法
+                  补充原文
                 </button>
-                <Menu
-                  label="新建其他内容"
-                  actions={kinds
-                    .filter((k) => !["topic", "record"].includes(k))
-                    .map((k) => ({
-                      label: "新建" + kindLabels[k],
-                      action: () => add(k),
-                    }))}
-                />
                 <select
                   aria-label="内容类型"
                   value={typeFilter}
                   onChange={(e) => setTypeFilter(e.target.value)}
                 >
-                  <option value="全部">全部类型</option>
+                  <option value="全部">全部</option>
                   {kinds
                     .filter((k) => k !== "topic")
                     .map((k) => (
@@ -1018,171 +1255,41 @@ export default function Workspace() {
                     (typeFilter === "全部" || e.kind === typeFilter),
                 ),
                 false,
-                "收集箱是空的，有新想法时随时记下来。",
+                "还没有未整理内容，有想法时随时记下来。",
               )}
             </>
           )}
-          {page === "主题详情" && t && (
-            <>
-              <section className="topic-overview">
-                <div>
-                  <span className="overview-label">目标</span>
-                  <p>{String(t.data.goal || "暂未填写，随时可以补充。")}</p>
-                </div>
-                <div>
-                  <span className="overview-label">当前重点</span>
-                  <p>
-                    {String(t.data.focus || "从当前最想弄清楚的内容开始。")}
-                  </p>
-                </div>
-                <details className="disclosure">
-                  <summary>主题详情</summary>
-                  <RecordFields
-                    entity={t}
-                    items={items}
-                    zone={zone}
-                    onJump={jump}
-                  />
-                  <button onClick={() => openEdit(t)}>编辑主题</button>
-                </details>
-              </section>
-              <div className="topic-tabs" role="group" aria-label="主题内容">
-                {topicSections.map((s, index) => (
-                  <button
-                    key={s.label}
-                    aria-pressed={activeSection === index}
-                    onClick={() => {
-                      const remembered = (
-                        s.kinds as readonly string[]
-                      ).includes(tab)
-                        ? tab
-                        : s.kinds[0];
-                      setGraph(false);
-                      void switchTab(remembered);
-                    }}
-                  >
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-              <section className="topic-content">
-                <div className="content-toolbar">
-                  <div className="segmented">
-                    {activeSection === 1 ? (
-                      <>
-                        <button
-                          aria-pressed={!graph && tab === "card"}
-                          onClick={() => {
-                            setGraph(false);
-                            void switchTab("card");
-                          }}
-                        >
-                          卡片
-                        </button>
-                        <button
-                          aria-pressed={graph}
-                          onClick={() => setGraph(true)}
-                        >
-                          逻辑图
-                        </button>
-                        <button
-                          aria-pressed={tab === "relation" && !graph}
-                          onClick={() => {
-                            setGraph(false);
-                            void switchTab("relation");
-                          }}
-                        >
-                          关系
-                        </button>
-                      </>
-                    ) : (
-                      topicSections[activeSection]?.kinds.map((k) => (
-                        <button
-                          key={k}
-                          aria-pressed={tab === k}
-                          onClick={() => void switchTab(k)}
-                        >
-                          {
-                            (
-                              {
-                                record: "原始想法",
-                                card: "卡片",
-                                relation: "关系",
-                                question: "问题",
-                                task: "任务",
-                                event: "事件",
-                                evidence: "证据",
-                                validation: "验证",
-                                review: "复盘",
-                                topic: "主题",
-                              } as Record<Kind, string>
-                            )[k]
-                          }
-                        </button>
-                      ))
-                    )}
-                  </div>
-                  <div className="bar">
-                    <button
-                      className="primary"
-                      onClick={() => add(graph ? "card" : tab)}
-                    >
-                      <PlusIcon />
-                      新建{kindLabels[graph ? "card" : tab]}
-                    </button>
-                    {activeSection === 1 && (
-                      <button onClick={() => add("relation")}>建立关系</button>
-                    )}
-                    {selectBar()}
-                    {activeSection === 1 && (
-                      <Menu
-                        label="整理操作"
-                        actions={[
-                          {
-                            label: "撤销最近拆分或合并",
-                            action: () =>
-                              void work(async () => {
-                                const ops =
-                                  await api<{ id: string; undone: number }[]>(
-                                    "operations",
-                                  );
-                                const last = ops.find((e) => !e.undone);
-                                if (!last)
-                                  throw new Error("没有可撤销的拆分或合并。");
-                                await api("operations/" + last.id, "POST", {});
-                              }, "已恢复拆分或合并前的内容"),
-                          },
-                        ]}
-                      />
-                    )}
-                  </div>
-                </div>
-                <h2 className="content-kind">
-                  {graph ? "逻辑图" : kindLabels[tab]}
-                </h2>
-                {tab === "review" && (
-                  <div className="judgment-summary">
-                    <span>当前判断</span>
-                    <p>
-                      {String(
-                        scoped
-                          .filter((e) => e.kind === "review")
-                          .sort((a, b) =>
-                            b.updatedAt.localeCompare(a.updatedAt),
-                          )[0]?.data.judgment || "还没有记录当前判断。",
-                      )}
-                    </p>
-                  </div>
-                )}
-                {graph ? (
-                  <Graph items={scoped} onOpen={openDetail} />
-                ) : (
-                  list(scoped.filter((e) => e.kind === tab))
-                )}
-              </section>
-            </>
+          {page === "思考空间" && t && (
+            <ThinkingSpace
+              root={t}
+              rows={scoped}
+              items={items}
+              tab={tab}
+              graph={graph}
+              zone={zone}
+              onTab={(kind) => void switchTab(kind)}
+              onGraph={setGraph}
+              onAdd={add}
+              onOpen={openDetail}
+              onEdit={openEdit}
+              onHistory={(e) => void openHistory(e)}
+              onJump={jump}
+              onChanges={() => setChangesOpen(true)}
+              actions={actions}
+              renderList={list}
+              selection={selectBar()}
+              onUndo={() =>
+                void work(async () => {
+                  const ops =
+                    await api<{ id: string; undone: number }[]>("operations");
+                  const last = ops.find((e) => !e.undone);
+                  if (!last) throw new Error("没有可撤销的拆分或合并。");
+                  await api("operations/" + last.id, "POST", {});
+                }, "已恢复拆分或合并前的内容")
+              }
+            />
           )}
-          {page === "待思考" && (
+          {page === "待想清楚" && (
             <>
               <div className="toolbar">
                 <button className="primary" onClick={() => add("question")}>
@@ -1198,23 +1305,43 @@ export default function Workspace() {
                     <option key={v}>{v}</option>
                   ))}
                 </select>
+                <select
+                  aria-label="问题优先级"
+                  value={priorityFilter}
+                  onChange={(e) => setPriorityFilter(e.target.value)}
+                >
+                  {["全部", "高", "中", "低"].map((v) => (
+                    <option key={v}>{v}</option>
+                  ))}
+                </select>
                 {archives}
               </div>
               {list(
-                visible.filter((e) => e.kind === "question"),
+                visible.filter(
+                  (e) =>
+                    e.kind === "question" &&
+                    (priorityFilter === "全部" ||
+                      e.data.priority === priorityFilter),
+                ),
                 false,
-                "没有待思考问题，遇到疑问时可以直接记下来。",
+                "还没有未想清楚的问题，遇到疑问时可以直接留下来。",
               )}
             </>
           )}
-          {page === "待办与事件" && (
+          {page === "下一步" && (
             <>
               <div className="toolbar">
                 <button className="primary" onClick={() => add("task")}>
                   <PlusIcon />
-                  新建任务
+                  新建行动
                 </button>
                 <button onClick={() => add("event")}>新建事件</button>
+                <button
+                  className="text-button"
+                  onClick={() => navigate("今日关注")}
+                >
+                  今日关注
+                </button>
                 <div className="segmented">
                   {["今日", "本周", "逾期", "全部"].map((v) => (
                     <button
@@ -1335,6 +1462,18 @@ export default function Workspace() {
           }
           onHistory={() => void openHistory(detail)}
           onJump={jump}
+          onSupplement={supplement}
+        />
+      )}
+      {changesOpen && t && (
+        <ThinkingChanges
+          rows={scoped}
+          zone={zone}
+          onClose={() => setChangesOpen(false)}
+          onOpen={(e) => {
+            setChangesOpen(false);
+            jump(e);
+          }}
         />
       )}
       {aiOpen && t && (
@@ -1343,6 +1482,7 @@ export default function Workspace() {
           analyses={analyses}
           scope={inputScope}
           selection={selecting}
+          standalone={t.kind === "record"}
           selectedCount={selectedScoped.length}
           configured={user.aiConfigured}
           busy={busy}
@@ -1370,7 +1510,7 @@ export default function Workspace() {
             edit.entity?.id || edit.suggestion || edit.kind + ":" + edit.topic
           }
           request={edit}
-          items={alive}
+          items={items}
           userId={user.id}
           onSave={save}
           onClose={() => setEdit(null)}
@@ -1451,7 +1591,7 @@ export default function Workspace() {
                       .filter(Boolean),
                   });
                   setSplit(null);
-                }, "已拆分卡片")
+                }, "你把这个想法分清楚了。")
               }
             >
               保存拆分

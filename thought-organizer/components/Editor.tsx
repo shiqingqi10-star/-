@@ -22,6 +22,8 @@ export type EditRequest = {
   data?: Record<string, unknown>;
   topic: string | null;
   suggestion?: string;
+  rootId?: string;
+  rootVersion?: number;
 };
 export default function Editor({
   request,
@@ -46,7 +48,10 @@ export default function Editor({
     ":" +
     (request.entity?.id ||
       request.suggestion ||
-      "new-" + request.kind + ":" + (request.topic || "inbox"));
+      "new-" +
+        request.kind +
+        ":" +
+        (request.rootId || request.topic || "inbox"));
   const base = () => ({
     ...request.entity?.data,
     ...(!request.entity ? defaultData(request.kind) : {}),
@@ -70,6 +75,7 @@ export default function Editor({
     () => draft().version ?? request.entity?.version,
   );
   const [draftPresent, setDraftPresent] = useState(() => Boolean(draft().data));
+  const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [errors, setErrors] = useState<Record<string, string>>({}),
@@ -87,6 +93,7 @@ export default function Editor({
     }
   }
   function change(k: string, v: unknown) {
+    setDirty(true);
     const next = { ...data, [k]: v };
     setData(next);
     persist(next);
@@ -134,7 +141,10 @@ export default function Editor({
             !items.some(
               (e) =>
                 e.id === id &&
-                !e.deletedAt &&
+                (!e.deletedAt ||
+                  ((request.entity?.data[f.key] as string[]) || []).includes(
+                    id,
+                  )) &&
                 (!typed[f.key] || typed[f.key].includes(e.kind)) &&
                 (request.kind !== "relation" || e.topic === topic) &&
                 (f.key !== "hypothesisRefs" || e.data.type === "假设"),
@@ -293,6 +303,29 @@ export default function Editor({
           void save();
         }}
       >
+        <p className="editing-status" role="status">
+          {busy
+            ? "保存中…"
+            : error
+              ? "保存失败 · 输入仍保留"
+              : draftPresent
+                ? "本地草稿 · 尚未保存"
+                : dirty
+                  ? "正在编辑"
+                  : "正在编辑 · 已载入保存内容"}
+        </p>
+        {request.entity &&
+          fields[request.kind].some(
+            (f) =>
+              f.type === "refs" &&
+              ((data[f.key] as string[]) || []).some(
+                (id) => items.find((e) => e.id === id)?.deletedAt,
+              ),
+          ) && (
+            <p className="notice warning">
+              有些关联内容已删除，已有引用会保留。可以在“与哪些内容有关”中调整，或到回收站恢复。
+            </p>
+          )}
         {error && (
           <p className="notice error" role="alert">
             {error}
@@ -333,9 +366,9 @@ export default function Editor({
             {request.kind !== "topic" && (
               <div className="field wide">
                 <label>
-                  <span>归属主题</span>
+                  <span>归属思考（可选）</span>
                   <select
-                    aria-label="归属主题"
+                    aria-label="归属思考（可选）"
                     disabled={Boolean(request.suggestion)}
                     value={topic || ""}
                     onChange={(e) => {
@@ -344,7 +377,7 @@ export default function Editor({
                       persist(data, t);
                     }}
                   >
-                    <option value="">收集箱</option>
+                    <option value="">独立整理，无需主题</option>
                     {items
                       .filter((e) => e.kind === "topic" && !e.deletedAt)
                       .map((t) => (

@@ -528,3 +528,229 @@ test("整体撤销拆分恢复原卡片和关系，后续编辑阻止静默覆�
   );
   assert.throws(() => service.undoOperation(owner, next.id));
 });
+
+test("独立原文无需主题可关联全部类型；创建与关联原子保存，冲突不留孤立对象，导出恢复兼容", () => {
+  const id = user();
+  const content =
+    "  我想参加周末的活动，但怕占用时间，又担心错过认识新朋友的机会。\n原文的换行也保留。  ";
+  let root = service.create(id, "record", { content, status: "未整理" }, null);
+  const card = service.createThinkingItem(id, root.id, root.version, "card", {
+    content: "认识新朋友",
+    type: "假设",
+    sourceRefs: [root.id],
+  });
+  root = service.get(id, root.id);
+  const q = service.createThinkingItem(id, root.id, root.version, "question", {
+    title: "活动安排和参加人群是什么？",
+    refs: [card.id],
+  });
+  root = service.get(id, root.id);
+  const task = service.createThinkingItem(id, root.id, root.version, "task", {
+    title: "先向组织者了解情况。",
+    questionRefs: [q.id],
+  });
+  root = service.get(id, root.id);
+  const evidence = service.createThinkingItem(
+    id,
+    root.id,
+    root.version,
+    "evidence",
+    {
+      title: "组织者反馈",
+      type: "个人推断",
+      supports: [card.id],
+      status: "待核实",
+    },
+  );
+  root = service.get(id, root.id);
+  service.createThinkingItem(id, root.id, root.version, "review", {
+    title: "当前判断",
+    judgment: "了解安排后再决定",
+    changeReason: "时间仍不确定",
+  });
+  root = service.get(id, root.id);
+  service.createThinkingItem(id, root.id, root.version, "event", {
+    title: "活动",
+    date: "2026-10-17T10:00",
+  });
+  root = service.get(id, root.id);
+  service.createThinkingItem(id, root.id, root.version, "validation", {
+    title: "核对时间",
+    hypothesisRefs: [card.id],
+    taskRefs: [task.id],
+    evidenceRefs: [evidence.id],
+    direction: "无结论",
+  });
+  root = service.get(id, root.id);
+  assert.equal(root.topic, null);
+  assert.equal(root.data.content, content);
+  assert.equal((root.data.refs as string[]).length, 7);
+  const before = service.list(id).length;
+  assert.throws(
+    () =>
+      service.createThinkingItem(id, root.id, 1, "event", {
+        title: "不会留下孤立事件",
+      }),
+    /冲突/,
+  );
+  assert.equal(service.list(id).length, before);
+  assert.throws(
+    () =>
+      service.createThinkingItem(other, root.id, root.version, "task", {
+        title: "其他账号",
+      }),
+    /无权访问/,
+  );
+  const backup = service.exportData(id),
+    restoredUser = user();
+  const restored = service.importData(restoredUser, backup);
+  const restoredRoot = service.get(restoredUser, restored.ids[root.id]);
+  assert.equal(restoredRoot.data.content, content);
+  assert.equal((restoredRoot.data.refs as string[]).length, 7);
+  assert(service.history(restoredUser, restoredRoot.id).length >= 7);
+});
+test("删除关联内容后仍可编辑原文及位置，不丢已有引用；新建无效引用仍被拒绝", () => {
+  const id = user();
+  let root = service.create(id, "record", { content: "已有原文" }, null);
+  const item = service.createThinkingItem(id, root.id, root.version, "task", {
+    title: "待办",
+  });
+  root = service.get(id, root.id);
+  service.softDelete(id, item.id, item.version);
+  root = service.update(
+    id,
+    root.id,
+    root.version,
+    { ...root.data, content: "补充后的原文", lastPosition: "review" },
+    null,
+  );
+  assert.deepEqual(root.data.refs, [item.id]);
+  assert.equal(root.data.lastPosition, "review");
+  assert.throws(() =>
+    service.create(id, "record", { content: "新原文", refs: [item.id] }, null),
+  );
+});
+test("独立思考连续采纳不误过期，保留AI来源、幂等与真实修改过期保护", () => {
+  const id = user();
+  let root = service.create(id, "record", { content: "我想认识新朋友" }, null);
+  const analysisId = randomUUID();
+  run(
+    "INSERT INTO analyses VALUES(?,?,?,?,?,?,?)",
+    analysisId,
+    id,
+    null,
+    "整理思路",
+    JSON.stringify([root]),
+    JSON.stringify(good),
+    new Date().toISOString(),
+  );
+  const suggestions = [1, 2, 3].map((n) => {
+    const sid = randomUUID();
+    run(
+      "INSERT INTO suggestions(id,analysis_id,owner,kind,data) VALUES(?,?,?,?,?)",
+      sid,
+      analysisId,
+      id,
+      "card",
+      JSON.stringify({
+        title: `观点${n}`,
+        content: `认识新朋友${n}`,
+        type: "观点或推断",
+        sourceRefs: [root.id],
+        localId: `draft${n}`,
+      }),
+    );
+    return sid;
+  });
+  const first = ai.applySuggestion(id, suggestions[0], {
+    action: "accept",
+    recordId: root.id,
+    recordVersion: root.version,
+    data: {
+      content: "修改后的建议",
+      type: "观点或推断",
+      source: "用户陈述",
+      sourceRefs: [root.id],
+    },
+  }) as import("../lib/schema").Entity;
+  assert.equal(first.data.source, "AI推断");
+  root = service.get(id, root.id);
+  assert(!ai.analysisList(id, null)[0].stale);
+  ai.applySuggestion(id, suggestions[1], {
+    action: "accept",
+    recordId: root.id,
+    recordVersion: root.version,
+  });
+  assert(!ai.analysisList(id, null)[0].stale);
+  assert.equal(
+    (
+      ai.applySuggestion(id, suggestions[0], { action: "accept" }) as {
+        id: string;
+      }
+    ).id,
+    first.id,
+  );
+  root = service.get(id, root.id);
+  service.update(
+    id,
+    root.id,
+    root.version,
+    { ...root.data, content: "我的想法变了" },
+    null,
+  );
+  assert(ai.analysisList(id, null)[0].stale);
+  assert.throws(
+    () => ai.applySuggestion(id, suggestions[2], { action: "accept" }),
+    /旧分析/,
+  );
+});
+test("独立分析必须明确选取；实际输入不包含无关记录或另一账号，使用离线提供器", async (t) => {
+  const id = user(),
+    root = service.create(id, "record", { content: "这次的独立思考" }, null);
+  const unrelated = service.create(
+    id,
+    "record",
+    { content: "另一段不能默认发送的私人内容" },
+    null,
+  );
+  process.env.DEEPSEEK_API_KEY = "test-only-not-real";
+  let requestText = "";
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (_url: unknown, options: RequestInit) => {
+      requestText = String(options.body);
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: { content: JSON.stringify(good) },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { total_tokens: 1 },
+        }),
+      );
+    },
+  );
+  try {
+    await assert.rejects(
+      ai.analyze(id, { topic: null, ids: [], mode: "整理思路" }),
+      /请选择独立思考/,
+    );
+    assert.equal(requestText, "");
+    const analysis = await ai.analyze(id, {
+      topic: null,
+      ids: [root.id],
+      mode: "整理思路",
+    });
+    assert(analysis);
+    assert(requestText.includes(root.id));
+    assert(
+      !requestText.includes(unrelated.id) &&
+        !requestText.includes(String(unrelated.data.content)),
+    );
+  } finally {
+    delete process.env.DEEPSEEK_API_KEY;
+  }
+});

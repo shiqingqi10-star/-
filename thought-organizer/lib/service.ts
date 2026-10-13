@@ -59,6 +59,7 @@ function references(
   topic: string | null,
   data: Record<string, unknown>,
   id?: string,
+  preserveDeleted = false,
 ) {
   if (topic) {
     const t = get(owner, topic);
@@ -79,7 +80,11 @@ function references(
   for (const key of referenceFields(kind)) {
     for (const target of (data[key] as string[]) || []) {
       if (target === id && key === "parentRefs") fail("任务不能是自己的子任务");
-      const e = get(owner, target);
+      const preserved =
+        preserveDeleted &&
+        id &&
+        ((get(owner, id, true).data[key] as string[]) || []).includes(target);
+      const e = get(owner, target, Boolean(preserved));
       if (required[key] && !required[key].includes(e.kind))
         fail("引用类型错误：" + key);
       if (kind === "relation" && e.topic !== topic)
@@ -158,7 +163,7 @@ function updateInternal(
   if (e.version !== version)
     fail("数据冲突：已保留输入，请刷新最新版本后合并", 409);
   const d = validateData(e.kind, data);
-  references(owner, e.kind, topic, d, id);
+  references(owner, e.kind, topic, d, id, true);
   const changes = [
     ...new Set([...Object.keys(e.data), ...Object.keys(d)]),
   ].filter((k) => JSON.stringify(e.data[k]) !== JSON.stringify(d[k]));
@@ -199,6 +204,53 @@ export function update(
   topic: string | null,
 ) {
   return transaction(() => updateInternal(owner, id, version, data, topic));
+}
+// Use the existing reference/history model to keep standalone thoughts durable.
+export function linkThinkingItem(
+  owner: string,
+  rootId: string,
+  version: number,
+  item: Entity,
+) {
+  return transaction(() => {
+    const root = get(owner, rootId);
+    if (
+      root.kind !== "record" ||
+      root.topic ||
+      item.owner !== owner ||
+      item.topic ||
+      item.kind === "topic"
+    )
+      fail("独立思考关联无效");
+    return updateInternal(
+      owner,
+      root.id,
+      version,
+      {
+        ...root.data,
+        refs: [...new Set([...((root.data.refs as string[]) || []), item.id])],
+      },
+      null,
+    );
+  });
+}
+export function createThinkingItem(
+  owner: string,
+  rootId: string,
+  version: number,
+  kind: Kind,
+  data: unknown,
+) {
+  return transaction(() => {
+    const root = get(owner, rootId);
+    if (root.version !== version)
+      fail("数据冲突：已保留输入，请刷新最新版本后合并", 409);
+    if (root.kind !== "record" || root.topic || kind === "topic")
+      fail("独立思考关联无效");
+    const item = createInternal(owner, kind, data, null);
+    linkThinkingItem(owner, rootId, version, item);
+    return item;
+  });
 }
 export function impact(owner: string, id: string) {
   get(owner, id, true);

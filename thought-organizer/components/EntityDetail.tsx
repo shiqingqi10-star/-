@@ -1,4 +1,5 @@
 "use client";
+import { useEffect, useState } from "react";
 import { Entity, fields, common } from "@/lib/schema";
 import {
   entityName,
@@ -12,11 +13,13 @@ export function RecordFields({
   items,
   zone,
   onJump,
+  exclude = [],
 }: {
   entity: Entity;
   items: Entity[];
   zone: string;
   onJump: (e: Entity) => void;
+  exclude?: string[];
 }) {
   return (
     <dl className="record-fields">
@@ -24,6 +27,7 @@ export function RecordFields({
         .filter(
           (f) =>
             f.key !== "lastPosition" &&
+            !exclude.includes(f.key) &&
             entity.data[f.key] !== undefined &&
             entity.data[f.key] !== "" &&
             entity.data[f.key] !== false &&
@@ -83,6 +87,7 @@ export default function EntityDetail({
   onEdit,
   onHistory,
   onJump,
+  onSupplement,
 }: {
   entity: Entity;
   items: Entity[];
@@ -91,7 +96,24 @@ export default function EntityDetail({
   onEdit: () => void;
   onHistory: () => void;
   onJump: (e: Entity) => void;
+  onSupplement?: (action: "evidence" | "question" | "task", e: Entity) => void;
 }) {
+  const [aiOrigin, setAiOrigin] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void fetch("/api/analyses" + (entity.topic ? "?topic=" + entity.topic : ""))
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows: { suggestions: { target: string | null }[] }[]) => {
+        if (active)
+          setAiOrigin(
+            rows.some((a) => a.suggestions.some((s) => s.target === entity.id)),
+          );
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [entity.id, entity.topic]);
   return (
     <Modal
       title={kindLabels[entity.kind]}
@@ -100,8 +122,94 @@ export default function EntityDetail({
       }
       onClose={onClose}
     >
-      <h3 className="record-title">{entityName(entity)}</h3>
-      <RecordFields entity={entity} items={items} zone={zone} onJump={onJump} />
+      {Boolean(entity.data.title) && (
+        <h3 className="record-title">{String(entity.data.title)}</h3>
+      )}
+      {(aiOrigin || entity.data.source === "AI推断") && (
+        <p className="notice">
+          来源：AI建议，经你确认后保存；不代表已核实事实。
+        </p>
+      )}
+      {Boolean(entity.data.content) && !entity.deletedAt && (
+        <button
+          className="body-edit"
+          onClick={onEdit}
+          aria-label="点击正文编辑"
+        >
+          {String(entity.data.content)}
+        </button>
+      )}
+      {entity.kind === "card" && !entity.deletedAt && onSupplement && (
+        <div className="bar contextual-actions">
+          <button onClick={() => onSupplement("evidence", entity)}>
+            补充依据
+          </button>
+          <button onClick={() => onSupplement("question", entity)}>
+            留下疑问
+          </button>
+          <button onClick={() => onSupplement("task", entity)}>
+            看看下一步
+          </button>
+        </div>
+      )}
+      {entity.kind === "question" && !entity.deletedAt && onSupplement && (
+        <button onClick={() => onSupplement("task", entity)}>
+          为这个疑问安排下一步
+        </button>
+      )}
+      {entity.kind === "card" && (
+        <section className="related-basis">
+          <h3>与这条观点有关的依据</h3>
+          {items
+            .filter(
+              (e) =>
+                !e.deletedAt &&
+                e.kind === "evidence" &&
+                ([
+                  ...((e.data.supports as string[]) || []),
+                  ...((e.data.opposes as string[]) || []),
+                ].includes(entity.id) ||
+                  ((entity.data.evidenceRefs as string[]) || []).includes(
+                    e.id,
+                  )),
+            )
+            .map((e) => (
+              <button
+                key={e.id}
+                className="linked-record"
+                onClick={() => onJump(e)}
+              >
+                {entityName(e)} · {String(e.data.type || "依据")} ·{" "}
+                {String(e.data.status || "待核实")}
+              </button>
+            ))}
+          {!items.some(
+            (e) =>
+              !e.deletedAt &&
+              e.kind === "evidence" &&
+              ([
+                ...((e.data.supports as string[]) || []),
+                ...((e.data.opposes as string[]) || []),
+              ].includes(entity.id) ||
+                ((entity.data.evidenceRefs as string[]) || []).includes(e.id)),
+          ) && (
+            <p className="muted">
+              暂未关联依据。个人推断与已核实事实仍需分开。
+            </p>
+          )}
+        </section>
+      )}
+      <RecordFields
+        entity={entity}
+        items={items}
+        zone={zone}
+        onJump={onJump}
+        exclude={
+          entity.data.content && !entity.deletedAt
+            ? ["title", "content"]
+            : ["title"]
+        }
+      />
       <details className="disclosure record-info">
         <summary>记录信息</summary>
         <p>编号：{entity.id}</p>

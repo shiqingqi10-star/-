@@ -1,6 +1,6 @@
 "use client";
-import { useState } from "react";
-import { Entity, Kind } from "@/lib/schema";
+import { useRef, useState } from "react";
+import { Entity, Kind, fields } from "@/lib/schema";
 import { entityName, kindLabels, readableTime } from "@/lib/presentation";
 import Modal from "./ui/Modal";
 export type Suggestion = {
@@ -25,6 +25,7 @@ export default function AIAssistant({
   scope,
   selection,
   selectedCount,
+  standalone = false,
   configured,
   busy,
   zone,
@@ -40,6 +41,7 @@ export default function AIAssistant({
   scope: Entity[];
   selection: boolean;
   selectedCount: number;
+  standalone?: boolean;
   configured: boolean;
   busy: boolean;
   zone: string;
@@ -53,8 +55,28 @@ export default function AIAssistant({
 }) {
   const [mode, setMode] = useState("整理思路"),
     [answers, setAnswers] = useState("");
+  const answerInput = useRef<HTMLTextAreaElement>(null);
+  const [expanded, setExpanded] = useState<string[]>([]);
+  const brief = (value: unknown) => {
+    const text = String(value);
+    return text.length > 180
+      ? text.slice(0, 180) + "…（展开查看完整内容）"
+      : text;
+  };
   function suggestions(a: Analysis, kinds: string[]) {
-    const rows = a.suggestions.filter((s) => kinds.includes(s.kind));
+    const ordered = a.suggestions
+      .slice()
+      .sort(
+        (a, b) =>
+          ["issue", "task", "question", "card", "relation"].indexOf(a.kind) -
+          ["issue", "task", "question", "card", "relation"].indexOf(b.kind),
+      );
+    const primary = ordered.slice(0, 5).map((s) => s.id);
+    const rows = a.suggestions.filter(
+      (s) =>
+        kinds.includes(s.kind) &&
+        (primary.includes(s.id) || expanded.includes(a.id)),
+    );
     if (!rows.length) return <p className="muted">本次没有相关建议。</p>;
     return rows.map((s) => (
       <article className="ai-suggestion" key={s.id}>
@@ -68,8 +90,27 @@ export default function AIAssistant({
           {s.data.impact ? " · " + s.data.impact : ""}
         </p>
         {Boolean(s.data.quote) && (
-          <blockquote>{String(s.data.quote)}</blockquote>
+          <blockquote>{brief(s.data.quote)}</blockquote>
         )}
+        <p>
+          <strong>为什么值得继续想：</strong>
+          {brief(
+            s.data.reason ||
+              s.data.impactReason ||
+              (s.kind === "card"
+                ? "这是一条待你确认的观点整理建议。"
+                : "这是待你确认的连接或行动建议。"),
+          )}
+        </p>
+        <p>
+          <strong>可以怎样处理：</strong>
+          {brief(
+            s.data.validation ||
+              s.data.action ||
+              s.data.content ||
+              "核对连接对象与理由，预览后再决定是否采纳。",
+          )}
+        </p>
         <details className="disclosure">
           <summary>查看理由与内容</summary>
           {Object.entries(s.data)
@@ -105,13 +146,30 @@ export default function AIAssistant({
             ))}
         </details>
         <div className="bar">
+          {!s.target && s.status !== "ignored" && (
+            <button
+              onClick={() => {
+                setAnswers(
+                  (value) =>
+                    value +
+                    (value ? "\n" : "") +
+                    "关于“" +
+                    String(s.data.title || "这条建议") +
+                    "”：",
+                );
+                answerInput.current?.focus();
+              }}
+            >
+              补充说明
+            </button>
+          )}
           {s.kind === "issue" ? (
             <>
               <button
                 disabled={a.stale && !s.target}
                 onClick={() => onSuggestion(s, a, "question")}
               >
-                {s.target ? "查看已创建内容" : "转为待思考问题"}
+                {s.target ? "查看已创建内容" : "留下问题"}
               </button>
               {!s.target && (
                 <button
@@ -127,7 +185,7 @@ export default function AIAssistant({
               disabled={a.stale && !s.target}
               onClick={() => onSuggestion(s, a)}
             >
-              {s.target ? "查看已创建内容" : "预览与采纳"}
+              {s.target ? "查看已创建内容" : "预览并采纳"}
             </button>
           )}
           {!s.target && s.status !== "ignored" && (
@@ -163,28 +221,54 @@ export default function AIAssistant({
       <div className="segmented ai-actions">
         {["整理思路", "检查推导", "生成下一步"].map((m) => (
           <button key={m} aria-pressed={mode === m} onClick={() => setMode(m)}>
-            {m}
+            {
+              {
+                整理思路: "帮我分清这段想法",
+                检查推导: "看看哪里还没说通",
+                生成下一步: "我下一步可以做什么",
+              }[m]
+            }
           </button>
         ))}
       </div>
       <details className="disclosure scope-preview">
         <summary>
-          {selection ? "选中内容" : "当前主题"} · 包含{" "}
-          {selection && !selectedCount ? 0 : scope.length} 项
+          {selection ? "选中内容" : standalone ? "当前独立思考" : "当前思考"} ·
+          包含 {selection && !selectedCount ? 0 : scope.length} 项
         </summary>
         <p className="muted">
-          包含当前主题目标及所选内容引用的同主题前提和证据。
+          {standalone
+            ? "只包含当前原文中明确关联的内容，或你选中的内容及其引用；其他无关思考不会发送。"
+            : "包含当前思考目标及所选内容引用的同主题前提和依据。"}
         </p>
         {scope.map((e) => (
-          <div key={e.id}>
-            <span>{kindLabels[e.kind]}</span>
-            <p>{entityName(e)}</p>
-          </div>
+          <details key={e.id} className="disclosure">
+            <summary>
+              {kindLabels[e.kind]} · {entityName(e)}
+            </summary>
+            {fields[e.kind]
+              .filter((f) => e.data[f.key] !== undefined)
+              .map((f) => (
+                <p className="full-text" key={f.key}>
+                  <strong>{f.label}：</strong>
+                  {f.type === "refs"
+                    ? (e.data[f.key] as string[])
+                        .map((id) =>
+                          scope.find((x) => x.id === id)
+                            ? entityName(scope.find((x) => x.id === id)!)
+                            : "范围外关联（只发送引用）",
+                        )
+                        .join("、")
+                    : String(e.data[f.key])}
+                </p>
+              ))}
+          </details>
         ))}
       </details>
       <label>
         <span>补充说明或澄清回答（可跳过）</span>
         <textarea
+          ref={answerInput}
           rows={3}
           value={answers}
           onChange={(e) => setAnswers(e.target.value)}
@@ -230,14 +314,45 @@ export default function AIAssistant({
           {suggestions(a, ["question", "task"])}
           <h4>可采纳的卡片或关系</h4>
           {suggestions(a, ["card", "relation"])}
+          {a.suggestions.length > 5 && (
+            <button
+              className="text-button"
+              onClick={() =>
+                setExpanded((ids) =>
+                  ids.includes(a.id)
+                    ? ids.filter((id) => id !== a.id)
+                    : [...ids, a.id],
+                )
+              }
+            >
+              {expanded.includes(a.id)
+                ? "收起其他建议"
+                : `展开全部 ${a.suggestions.length} 条建议`}
+            </button>
+          )}
           <details className="disclosure">
             <summary>本次采用的内容快照</summary>
             {a.snapshot.map((e) => (
               <div key={e.id}>
                 <h4>{entityName(e)}</h4>
-                <p>
-                  {String(e.data.content || e.data.goal || e.data.reason || "")}
-                </p>
+                {fields[e.kind]
+                  .filter((f) => e.data[f.key] !== undefined)
+                  .map((f) => (
+                    <p className="full-text" key={f.key}>
+                      {f.label}：
+                      {Array.isArray(e.data[f.key])
+                        ? (e.data[f.key] as string[])
+                            .map((id) =>
+                              a.snapshot.find((x) => x.id === id)
+                                ? entityName(
+                                    a.snapshot.find((x) => x.id === id)!,
+                                  )
+                                : "范围外关联",
+                            )
+                            .join("、")
+                        : String(e.data[f.key])}
+                    </p>
+                  ))}
               </div>
             ))}
           </details>

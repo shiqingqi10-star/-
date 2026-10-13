@@ -15,6 +15,7 @@ import {
   list,
   get,
   create,
+  createThinkingItem,
   update,
   softDelete,
   impact,
@@ -136,6 +137,25 @@ async function handle(
       removeAccount(user, String(b.password || ""));
       return reply({ ok: true });
     }
+    if (
+      route === "thoughts" &&
+      id &&
+      action === "items" &&
+      req.method === "POST"
+    ) {
+      const v = z
+        .object({
+          kind: z.enum(kinds),
+          data: z.record(z.string(), z.unknown()),
+          version: z.number().int().positive(),
+        })
+        .strict()
+        .parse(b);
+      return reply(
+        createThinkingItem(user.id, id, v.version, v.kind, v.data),
+        201,
+      );
+    }
     if (route === "entities") {
       if (req.method === "GET") {
         if (id) {
@@ -256,6 +276,8 @@ async function handle(
           kind: z.enum(kinds).optional(),
           data: z.record(z.string(), z.unknown()).optional(),
           feedback: z.string().max(2000).optional(),
+          recordId: z.string().optional(),
+          recordVersion: z.number().int().positive().optional(),
         })
         .parse(b);
       return reply(applySuggestion(user.id, id, data));

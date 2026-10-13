@@ -9,6 +9,7 @@ import {
   readableTime,
 } from "@/lib/presentation";
 import { CheckIcon, ChevronRightIcon } from "@radix-ui/react-icons";
+import { cardMeaning } from "@/lib/thinking";
 import Menu, { MenuAction } from "./ui/Menu";
 export default function EntityList({
   items,
@@ -80,7 +81,13 @@ export default function EntityList({
             {excerpt(e) && <p className="entity-summary">{excerpt(e)}</p>}
             <div className="entity-meta">
               {!topics && (
-                <span>{String(e.data.type || kindLabels[e.kind])}</span>
+                <span>
+                  {e.kind === "card"
+                    ? cardMeaning[String(e.data.type)] ||
+                      (e.data.type as string) ||
+                      kindLabels[e.kind]
+                    : String(e.data.type || kindLabels[e.kind])}
+                </span>
               )}
               {Boolean(e.data.status) && (
                 <span
@@ -95,6 +102,20 @@ export default function EntityList({
                 >
                   {String(e.data.status)}
                 </span>
+              )}
+              {e.kind === "card" && (
+                <span
+                  className={
+                    e.data.verification === "已核实"
+                      ? "status done"
+                      : "status warn"
+                  }
+                >
+                  {String(e.data.verification || "未核实")}
+                </span>
+              )}
+              {e.kind === "card" && e.data.source === "AI推断" && (
+                <span>AI来源</span>
               )}
               {e.data.today === true && (
                 <span className="focus-label">今日关注</span>

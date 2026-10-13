@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { Entity, Kind, kinds, fields } from "../lib/schema";
+import { Entity, Kind, kinds, fields, selectScope } from "../lib/schema";
 import {
   focusItems,
   recentTopics,
@@ -68,7 +68,8 @@ test("今日关注合并去重、优先逾期与今天、只截取五项", () =>
   assert(!selected.some((e) => ["ordinary", "done", "future"].includes(e.id)));
   assert.equal(focusItems(rows, "2026-10-12", Infinity).length, 6);
 });
-test("旧位置中的全部九种内容映射到五个新主标签", () => {
+test("旧位置中的全部九种内容映射到三个自由切换阶段", () => {
+  assert.equal(topicSections.length, 3);
   for (const kind of kinds.filter((k) => k !== "topic")) {
     assert.equal(rememberedKind(kind), kind);
     assert(
@@ -108,4 +109,95 @@ test("每种类型的所有编辑字段可访问，必填字段位于基础区�
       }
     }
   }
+});
+
+const thinking = await import("../lib/thinking");
+test("独立思考只收纳明确关联的内容，保留反向来源、跨类型链及账号隔离", () => {
+  const root = entity("raw", "record", { content: "完整原文" });
+  const card = entity("card", "card", {
+    content: "观点",
+    sourceRefs: [root.id],
+  });
+  const question = entity("question", "question", {
+    title: "疑问",
+    refs: [card.id],
+  });
+  const task = entity("task", "task", {
+    title: "行动",
+    questionRefs: [question.id],
+  });
+  const unrelated = entity("other", "record", { content: "无关的私人正文" });
+  const foreign = {
+    ...entity("foreign", "card", {
+      content: "其他账号",
+      sourceRefs: [root.id],
+    }),
+    owner: "another-owner",
+  };
+  const deleted = {
+    ...entity("deleted", "evidence", { title: "已删除", supports: [card.id] }),
+    deletedAt: "2026-10-13T00:00:00Z",
+  };
+  const rows = [root, card, question, task, unrelated, foreign, deleted];
+  assert.deepEqual(
+    thinking
+      .thinkingScope(rows, root)
+      .map((e) => e.id)
+      .sort(),
+    ["card", "question", "raw", "task"],
+  );
+  assert(!thinking.thinkingScope(rows, root).some((e) => e.id === "other"));
+});
+test("继续思考包含旧主题和独立原文，按关联内容真实更新时间排序，简称不改原文", () => {
+  const content = "  我想参加活动。\n但担心占用时间。  ";
+  const root = entity("raw", "record", { content }, "2026-10-10T00:00:00Z");
+  const card = entity(
+    "c",
+    "card",
+    { content: "担心时间", sourceRefs: [root.id] },
+    "2026-10-13T00:00:00Z",
+  );
+  const t = entity("topic", "topic", {}, "2026-10-12T00:00:00Z");
+  const archived = entity(
+    "archive",
+    "record",
+    { archived: true },
+    "2026-10-14T00:00:00Z",
+  );
+  assert.deepEqual(
+    thinking.recentThoughts([root, card, t, archived]).map((e) => e.id),
+    [root.id, t.id],
+  );
+  assert.equal(thinking.shortName(content), "我想参加活动");
+  assert.equal(root.data.content, content);
+});
+
+test("选择独立卡片只携带必要来源，不通过原文的归属列表扩散到未选卡片", () => {
+  const root = entity("root", "record", {
+    content: "当前原文",
+    refs: ["selected", "unselected"],
+  });
+  const selected = entity("selected", "card", {
+    content: "所选内容",
+    sourceRefs: [root.id],
+  });
+  const unselected = entity("unselected", "card", {
+    content: "同一思考中未选的其他内容",
+    sourceRefs: [root.id],
+  });
+  const pool = [root, selected, unselected];
+  assert.deepEqual(
+    selectScope(pool, null, [selected.id])
+      .map((e) => e.id)
+      .sort(),
+    [root.id, selected.id].sort(),
+  );
+  assert.equal(
+    selectScope(
+      pool,
+      null,
+      thinking.thinkingScope(pool, root).map((e) => e.id),
+    ).length,
+    3,
+  );
 });

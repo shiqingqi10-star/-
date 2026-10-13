@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { UI_VERSION } from "@/lib/thinking";
 export type User = {
   id: string;
   email: string;
@@ -40,6 +41,9 @@ export default function Settings({
   const [error, setError] = useState("");
   return (
     <div className="settings-stack">
+      <p className="muted" data-ui-version={UI_VERSION}>
+        界面版本：{UI_VERSION}
+      </p>
       <section className="settings-section surface">
         <h2>账号与偏好</h2>
         <p className="muted">{user.email} · 内容默认私人</p>

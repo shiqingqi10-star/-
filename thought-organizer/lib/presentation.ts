@@ -1,16 +1,22 @@
 import { Entity, Kind, Field, titles, fields, dateInZone } from "./schema";
 export const topicSections = [
-  { label: "原始想法", kinds: ["record"] },
-  { label: "思路整理", kinds: ["card", "relation"] },
-  { label: "问题与行动", kinds: ["question", "task", "event"] },
-  { label: "证据与验证", kinds: ["evidence", "validation"] },
-  { label: "判断与复盘", kinds: ["review"] },
+  { label: "写下来", kinds: ["record"] },
+  { label: "理清楚", kinds: ["card", "relation", "evidence"] },
+  {
+    label: "往前走",
+    kinds: ["question", "task", "event", "validation", "review"],
+  },
 ] as const;
 export const kindLabels: Record<Kind, string> = {
   ...titles,
-  record: "原始想法",
-  evidence: "证据",
-  review: "复盘",
+  topic: "一个思考",
+  record: "我最初的想法",
+  question: "还没想清楚",
+  task: "下一步行动",
+  event: "事件",
+  evidence: "我有哪些依据",
+  validation: "验证结果",
+  review: "我现在怎么看",
 };
 export function sectionFor(kind: Kind) {
   return topicSections.findIndex((s) =>
@@ -123,6 +129,7 @@ export function readableTime(value: string, zone: string, full = false) {
 }
 export function fieldLabel(kind: Kind, field: Field) {
   const names: Record<string, string> = {
+    refs: "与哪些内容有关",
     sourceRefs: "来源原文",
     evidenceRefs: "关联证据",
     hypothesisRefs: "待验证假设",
@@ -157,8 +164,8 @@ export function editorGroups(
     record: ["content"],
     card: ["content", "type"],
     relation: ["from", "to", "type", "reason"],
-    question: ["title", "priority"],
-    task: ["title", "due", "type"],
+    question: ["title"],
+    task: ["title", "due"],
     event: ["title", "date"],
     evidence: ["title", "type"],
     validation: ["title", "hypothesisRefs", "actual", "direction"],
@@ -169,6 +176,7 @@ export function editorGroups(
     base.push("waitingFor");
   if (kind === "task" && data.type === "验证任务")
     base.push(
+      "type",
       "action",
       "information",
       "observation",
@@ -213,7 +221,7 @@ export function editorGroups(
     { label: "基础信息", keys: base },
     { label: "补充信息", keys: more },
     { label: "来源与记录方法", keys: source },
-    { label: "关联内容", keys: refs },
+    { label: "与哪些内容有关", keys: refs },
     { label: "关注与归档", keys: ["today", "pinned", "archived"] },
   ].filter((g) => g.keys.length);
 }

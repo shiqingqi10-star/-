@@ -17,7 +17,8 @@
     "db:backup": "tsx scripts/database.ts backup",
     "db:restore": "tsx scripts/database.ts restore",
     "test:browser": "playwright test",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "test:restart": "node scripts/verify-restart.mjs"
   },
   "dependencies": {
     "@radix-ui/react-icons": "1.3.2",

@@ -57,3 +57,11 @@ AI建议采纳幂等：若已有target，重复调用直接返回该项目；旧
 ### 用量展示补充
 
 `GET /me` 的usage保留原calls/events/dailyLimit/monthlyLimit，新增todayUsed/monthUsed（按账号时区的自然日、自然月）及rollingDayUsed/rollingMonthUsed（最近24小时、30天）。原有后端额度规则未改变，界面分别显示日历用量和滚动额度。新增统计只读取当前账号的调用记录。
+
+## 独立思考补充（2026.10.13）
+
+- 原文record新增可选refs（明确关联的现有对象）和lastPosition（仍使用原kind）。数据库结构及schemaVersion=1不变，旧原文不要求补字段。
+- `POST /thoughts/:id/items`：`{kind,data,version}`，id必须是当前账号的活跃独立原文；在同一事务中创建对象并加入原文refs，version为原文版本。冲突或无效引用时全部回滚，不留下孤立对象。kind不能为topic。
+- `POST /suggestions/:id`额外接受可选recordId和recordVersion。原文必须在本次分析快照内且属于独立思考，确认后将采纳对象原子关联；卡片保持AI推断来源。连续采纳的新增关联不会使同一分析误过期，实际正文变化继续阻止采纳。
+- `POST /analyses`的topic为null时必须有明确ids，不再允许默认分析全部未归类内容。前端使用独立原文明确关联的范围或用户选中范围；其他主题及无关记录不会自动加入。
+- 编辑可以保留未变更的已删除旧引用，同时显示失效提示；新建或新增的引用仍必须活跃、归属正确、类型正确。回收站恢复仍遵循原有活跃引用校验。

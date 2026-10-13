@@ -1421,3 +1421,249 @@ pre {
     min-height: 40px;
   }
 }
+/* Personal thinking space: one entry, three freely accessible stages. */
+.thinking-home {
+  display: flex;
+  flex-direction: column;
+  max-width: 840px;
+  margin: 0 auto;
+  gap: var(--space-6);
+}
+.main:has(.thinking-home) > .page-heading {
+  max-width: 840px;
+  margin: 16px auto 24px;
+}
+.thinking-home .quick-record {
+  padding: var(--space-5);
+}
+.thinking-home .quick-record textarea {
+  min-height: 200px;
+  background: var(--surface);
+  border-color: var(--border);
+}
+.thinking-home .quick-record > p {
+  margin-top: 0;
+}
+.recent-thinking {
+  display: grid;
+  gap: 0;
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+.recent-thought {
+  width: 100%;
+  justify-content: space-between;
+  text-align: left;
+  white-space: normal;
+  padding: 20px;
+  border: 0;
+  border-radius: 0;
+}
+.recent-thought + .recent-thought {
+  border-top: 1px solid var(--border);
+}
+.recent-thought:first-child {
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+.recent-thought:last-child {
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+.recent-thought > div {
+  min-width: 0;
+}
+.recent-thought strong {
+  display: block;
+  font-weight: 550;
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+.recent-thought p {
+  font-size: 14px;
+  color: var(--secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: 6px 0;
+}
+.recent-thought > svg {
+  flex-shrink: 0;
+}
+.home-library-links {
+  gap: 20px;
+}
+.stage-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 24px 0;
+}
+.stage-tabs button {
+  min-height: 52px;
+  white-space: normal;
+}
+.stage-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  font-size: 12px;
+  background: var(--background);
+  color: var(--secondary);
+}
+.stage-tabs button[aria-pressed="true"] .stage-number {
+  background: var(--accent);
+  color: var(--surface);
+}
+.thinking-goal {
+  max-width: 880px;
+}
+.thinking-content {
+  margin-bottom: 24px;
+  min-width: 0;
+}
+.thinking-content .content-kind {
+  margin-bottom: 0;
+}
+.body-edit {
+  display: block;
+  background: transparent;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 8px 0;
+  width: 100%;
+  font-size: 16px;
+  font-weight: 400;
+}
+.body-edit:hover {
+  background: var(--background);
+  border: 0;
+}
+.original-record {
+  padding: 24px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  margin: 20px 0;
+}
+.original-content {
+  min-height: 100px;
+  margin-bottom: 12px;
+}
+.original-record .bar {
+  justify-content: flex-end;
+}
+.stage-next {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 24px 0;
+}
+.thinking-footer {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+.thinking-footer > button {
+  justify-self: start;
+}
+.card-guide {
+  margin: 0 0 20px;
+}
+.card-types,
+.next-more {
+  margin-top: 24px;
+}
+.next-more .bar {
+  margin-top: 16px;
+}
+.contextual-actions {
+  margin: 20px 0;
+}
+.full-text,
+.change-section p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+}
+.change-section {
+  border-top: 1px solid var(--border);
+  padding: 20px 0;
+}
+.change-section:first-of-type {
+  border-top: 0;
+}
+.change-section article {
+  margin: 16px 0;
+}
+.change-title {
+  white-space: normal;
+  text-align: left;
+  padding: 0;
+  justify-content: flex-start;
+}
+.editing-status {
+  font-size: 13px;
+  color: var(--secondary);
+  margin: 0 0 16px;
+}
+.ai-actions {
+  flex-direction: column;
+  align-items: stretch;
+}
+.ai-actions button {
+  white-space: normal;
+  justify-content: flex-start;
+}
+@media (max-width: 640px) {
+  .main:has(.thinking-home) > .page-heading {
+    margin-top: 0;
+  }
+  .thinking-home {
+    gap: 24px;
+  }
+  .thinking-home .quick-record,
+  .original-record {
+    padding: 16px;
+  }
+  .thinking-home .quick-record textarea {
+    min-height: 220px;
+  }
+  .quick-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .quick-footer > .bar {
+    justify-content: flex-end;
+  }
+  .stage-tabs button {
+    padding: 8px 4px;
+    gap: 5px;
+    font-size: 14px;
+  }
+  .stage-number {
+    width: 20px;
+    height: 20px;
+  }
+  .thinking-content .content-toolbar {
+    align-items: stretch;
+  }
+  .thinking-content .segmented {
+    flex-wrap: wrap;
+  }
+  .thinking-content .content-toolbar > .bar button {
+    white-space: normal;
+  }
+  .recent-thought {
+    padding: 16px;
+  }
+  .original-record .bar {
+    justify-content: flex-start;
+  }
+}

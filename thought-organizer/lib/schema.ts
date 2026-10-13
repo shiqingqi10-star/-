@@ -81,6 +81,8 @@ export const fields: Record<Kind, Field[]> = {
     f("content", "原始文字", "area", undefined, true),
     f("tags", "标签"),
     f("status", "整理状态", "text", ["未整理", "整理中", "已整理"]),
+    f("refs", "与哪些内容有关", "refs"),
+    f("lastPosition", "上次位置"),
   ],
   card: [
     f("title", "摘要"),
@@ -261,7 +263,7 @@ export function validateData(kind: Kind, data: unknown) {
     );
   const d = parsed.data;
   if (
-    kind === "topic" &&
+    ["topic", "record"].includes(kind) &&
     d.lastPosition &&
     !kinds.includes(d.lastPosition as Kind)
   )
@@ -329,7 +331,11 @@ export function selectScope(
     const e = pool.find((x) => x.id === id);
     if (!e) fail("分析范围不存在或跨主题", 403);
     chosen.set(id, e);
-    for (const key of referenceFields(e.kind))
+    // Record refs organize a standalone space; selecting one card must not
+    // expand through its source record into every other member of that space.
+    for (const key of referenceFields(e.kind).filter(
+      (key) => !(ids.length && e.kind === "record" && key === "refs"),
+    ))
       for (const ref of (e.data[key] as string[]) || [])
         if (pool.some((x) => x.id === ref) && !chosen.has(ref)) queue.push(ref);
   }
