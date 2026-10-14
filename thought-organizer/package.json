@@ -18,7 +18,8 @@
     "db:restore": "tsx scripts/database.ts restore",
     "test:browser": "playwright test",
     "format": "prettier --write .",
-    "test:restart": "node scripts/verify-restart.mjs"
+    "test:restart": "node scripts/verify-restart.mjs",
+    "test:database:runtime": "node scripts/verify-database-runtime.mjs"
   },
   "dependencies": {
     "@radix-ui/react-icons": "1.3.2",

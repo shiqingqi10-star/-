@@ -29,7 +29,14 @@ import {
   markdown,
 } from "@/lib/service";
 import { analyze, analysisList, applySuggestion, configured } from "@/lib/ai";
-import { all, one, run } from "@/lib/db";
+import {
+  all,
+  one,
+  run,
+  isDatabaseBusy,
+  DatabaseUnavailableError,
+  databaseDiagnostic,
+} from "@/lib/db";
 import { Kind, fail, AppError, kinds } from "@/lib/schema";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -324,29 +331,53 @@ async function handle(
     }
     fail("接口不存在", 404);
   } catch (e) {
-    const code =
-      e instanceof AppError
-        ? e.code
+    const databaseBusy = isDatabaseBusy(e);
+    const code = databaseBusy
+      ? "数据库暂时繁忙，请稍后重试。若持续出现，请确认没有重复运行的应用或未结束的数据库事务。"
+      : e instanceof DatabaseUnavailableError
+        ? e.message
+        : e instanceof AppError
+          ? e.code
+          : e instanceof z.ZodError
+            ? "字段校验失败"
+            : "服务暂时不可用";
+    const status = databaseBusy
+      ? 503
+      : e instanceof AppError
+        ? e.status
         : e instanceof z.ZodError
-          ? "字段校验失败"
-          : "服务暂时不可用";
-    const status =
-      e instanceof AppError ? e.status : e instanceof z.ZodError ? 400 : 500;
+          ? 400
+          : 500;
     if (status >= 500) {
-      const category = e instanceof AppError ? "service" : "internal",
+      const category =
+          databaseBusy || e instanceof DatabaseUnavailableError
+            ? "database"
+            : e instanceof AppError
+              ? "service"
+              : "internal",
         duration = Date.now() - started;
-      console.error(JSON.stringify({ category, status, duration }));
-      try {
-        run(
-          "INSERT INTO errors(category,status,duration,created_at) VALUES(?,?,?,?)",
+      console.error(
+        JSON.stringify({
           category,
           status,
           duration,
-          new Date().toISOString(),
-        );
+          ...(category === "database" ? databaseDiagnostic(e) : {}),
+        }),
+      );
+      try {
+        if (category !== "database")
+          run(
+            "INSERT INTO errors(category,status,duration,created_at) VALUES(?,?,?,?)",
+            category,
+            status,
+            duration,
+            new Date().toISOString(),
+          );
       } catch {}
     }
-    return reply({ error: code }, status);
+    const response = reply({ error: code }, status);
+    if (databaseBusy) response.headers.set("Retry-After", "2");
+    return response;
   }
 }
 export const GET = handle;

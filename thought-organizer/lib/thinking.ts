@@ -1,5 +1,5 @@
 import { Entity, referenceFields } from "./schema";
-export const UI_VERSION = "思考空间 · 2026.10.13";
+export const UI_VERSION = "思考空间 · 2026.10.13-r2";
 export function thinkingScope(items: Entity[], root: Entity): Entity[] {
   const pool = items.filter((e) => !e.deletedAt && e.owner === root.owner);
   if (root.kind === "topic")

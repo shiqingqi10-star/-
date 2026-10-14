@@ -136,7 +136,7 @@ try {
   ).toBeVisible();
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await expect(
-    page.getByText("界面版本：思考空间 · 2026.10.13", { exact: true }),
+    page.getByText("界面版本：思考空间 · 2026.10.13-r2", { exact: true }),
   ).toBeVisible();
   console.log(
     "PASS: production restart preserves authentication, complete old records, references, cards, versions and saved stage; UI version confirmed",

@@ -38,6 +38,7 @@ import Editor, { EditRequest } from "./Editor";
 import ThinkingSpace from "./ThinkingSpace";
 import ThinkingChanges from "./ThinkingChanges";
 import {
+  UI_VERSION,
   thinkingScope,
   recentThoughts,
   thinkingUpdatedAt,
@@ -49,21 +50,7 @@ import AIAssistant, { Analysis, Suggestion } from "./AIAssistant";
 import Modal from "./ui/Modal";
 import Menu, { MenuAction } from "./ui/Menu";
 import Settings, { User } from "./Settings";
-async function api<T = unknown>(
-  path: string,
-  method = "GET",
-  body?: unknown,
-): Promise<T> {
-  const r = await fetch("/api/" + path, {
-    method,
-    headers:
-      body === undefined ? undefined : { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const data = await r.json();
-  if (!r.ok) throw new Error(data.error || "请求失败，请稍后重试。");
-  return data;
-}
+import { api, ApiError } from "@/lib/http";
 const nav = [
   { name: "我的思考", icon: ReaderIcon },
   { name: "待想清楚", icon: QuestionMarkCircledIcon },
@@ -153,7 +140,13 @@ export default function Workspace() {
           quickRef.current = value;
         } catch {}
       })
-      .catch(() => setUser(null))
+      .catch((e) => {
+        setUser(null);
+        if (!(e instanceof ApiError && e.status === 401))
+          setError(
+            e instanceof Error ? e.message : "无法载入内容，请稍后重试。",
+          );
+      })
       .finally(() => setLoading(false));
   }, []);
   useEffect(() => {
@@ -872,6 +865,8 @@ export default function Workspace() {
         </form>
         <p className="muted small">
           内容默认私人，未配置 AI 也可以完整使用手动整理功能。
+          <br />
+          界面版本：{UI_VERSION}
         </p>
       </main>
     );

@@ -94,29 +94,40 @@ export function authAction(
     "SELECT * FROM users WHERE email=?",
     email,
   );
-  if (action === "register") {
-    if (user) fail("无法注册该账号");
-    const id = randomUUID();
-    run(
-      "INSERT INTO users(id,email,password,created_at) VALUES(?,?,?,?)",
-      id,
-      email,
-      passwordHash(password),
-      new Date().toISOString(),
-    );
-    user = one<User & { password: string }>(
-      "SELECT * FROM users WHERE id=?",
-      id,
-    );
-  } else if (!user || !verifyPassword(password, user.password))
+  if (action === "register" && user) fail("无法注册该账号");
+  if (
+    action !== "register" &&
+    (!user || !verifyPassword(password, user.password))
+  )
     fail("邮箱或密码错误", 401);
-  const token = session(user!.id);
-  const secure =
-    new URL(process.env.APP_ORIGIN || req.url).protocol === "https:";
-  return {
-    user: { id: user!.id, email: user!.email, role: user!.role },
-    cookie: `${cookieName}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${secure ? "; Secure" : ""}`,
-  };
+  const encrypted = action === "register" ? passwordHash(password) : null;
+  return transaction(() => {
+    if (action === "register") {
+      // Recheck inside the write transaction for two processes registering the
+      // same email; account creation and its initial session are all-or-nothing.
+      if (one("SELECT id FROM users WHERE email=?", email))
+        fail("无法注册该账号");
+      const id = randomUUID();
+      run(
+        "INSERT INTO users(id,email,password,created_at) VALUES(?,?,?,?)",
+        id,
+        email,
+        encrypted!,
+        new Date().toISOString(),
+      );
+      user = one<User & { password: string }>(
+        "SELECT * FROM users WHERE id=?",
+        id,
+      );
+    }
+    const token = session(user!.id);
+    const secure =
+      new URL(process.env.APP_ORIGIN || req.url).protocol === "https:";
+    return {
+      user: { id: user!.id, email: user!.email, role: user!.role },
+      cookie: `${cookieName}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${secure ? "; Secure" : ""}`,
+    };
+  });
 }
 export function logout(req: Request) {
   const token = req.headers

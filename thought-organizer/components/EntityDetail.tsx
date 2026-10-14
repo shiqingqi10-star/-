@@ -7,6 +7,7 @@ import {
   kindLabels,
   readableTime,
 } from "@/lib/presentation";
+import { api } from "@/lib/http";
 import Modal from "./ui/Modal";
 export function RecordFields({
   entity,
@@ -101,8 +102,9 @@ export default function EntityDetail({
   const [aiOrigin, setAiOrigin] = useState(false);
   useEffect(() => {
     let active = true;
-    void fetch("/api/analyses" + (entity.topic ? "?topic=" + entity.topic : ""))
-      .then((r) => (r.ok ? r.json() : []))
+    void api<{ suggestions: { target: string | null }[] }[]>(
+      "analyses" + (entity.topic ? "?topic=" + entity.topic : ""),
+    )
       .then((rows: { suggestions: { target: string | null }[] }[]) => {
         if (active)
           setAiOrigin(

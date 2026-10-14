@@ -853,8 +853,13 @@ test("无AI完整手动场景：独立原文、观点、疑问、关联行动、
   });
   await mobileNav(page, "设置");
   await expect(
-    page.getByText("界面版本：思考空间 · 2026.10.13", { exact: true }),
+    page.getByText("界面版本：思考空间 · 2026.10.13-r2", { exact: true }),
   ).toBeVisible();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.screenshot({
+    path: "data/visual-version-r2-desktop.png",
+    fullPage: true,
+  });
   expect(errors).toEqual([]);
 });
 
@@ -1054,4 +1059,76 @@ test("原文保存成功但列表刷新失败时仍确认保存并进入真实�
   const rows: Entity[] = await (await page.request.get("/api/entities")).json();
   expect(rows.filter((e) => e.kind === "record")).toHaveLength(1);
   expect(rows[0].data.content).toBe("已经真正保存的原文。");
+});
+
+test("登录和注册收到HTML或空响应时显示可读错误，版本在登录前可辨认", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(
+    page.getByText("界面版本：思考空间 · 2026.10.13-r2", { exact: false }),
+  ).toBeVisible();
+  await page
+    .getByLabel("邮箱", { exact: true })
+    .fill("response-error@test.example");
+  await page.getByLabel("密码（至少10位）").fill("test-safe-password-123");
+  await page.route("**/api/auth/login", (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: "text/html",
+      body: "<html>internal database is locked</html>",
+    }),
+  );
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "HTTP 500" }),
+  ).toBeVisible();
+  await expect(page.getByLabel("邮箱", { exact: true })).toHaveValue(
+    "response-error@test.example",
+  );
+  await expect(page.locator("body")).not.toContainText(
+    "Unexpected end of JSON input",
+  );
+  await expect(page.locator("body")).not.toContainText("internal database");
+  await page.getByRole("button", { name: "创建账号", exact: true }).click();
+  await page.route("**/api/auth/register", (route) =>
+    route.fulfill({ status: 503, body: "" }),
+  );
+  await page.getByRole("button", { name: "注册并登录", exact: true }).click();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "服务暂时繁忙" }),
+  ).toBeVisible();
+  await expect(page.getByLabel("邮箱", { exact: true })).toHaveValue(
+    "response-error@test.example",
+  );
+});
+
+test("首页实际只显示最近三项，可继续主题和独立记录且不显示归档内容", async ({
+  page,
+}) => {
+  await account(page);
+  await create(page.request, "topic", { title: "较早的主题" });
+  for (const title of ["独立思考一", "独立思考二", "独立思考三"])
+    await create(page.request, "record", {
+      title,
+      content: title + "的原文",
+      status: "未整理",
+    });
+  await create(page.request, "record", {
+    title: "归档内容",
+    content: "不要放在首页",
+    archived: true,
+  });
+  await page.goto("/");
+  await expect(page.locator(".recent-thought")).toHaveCount(3);
+  await expect(
+    page.getByRole("button", { name: "归档内容", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("navigation", { name: "主要导航" }).getByRole("button"),
+  ).toHaveCount(3);
+  await page.getByRole("button", { name: "独立思考三", exact: true }).click();
+  await expect(
+    page.getByRole("group", { name: "思考阶段" }).getByRole("button"),
+  ).toHaveCount(3);
 });

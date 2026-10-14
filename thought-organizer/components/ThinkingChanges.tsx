@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { Entity } from "@/lib/schema";
 import { entityName, readableTime } from "@/lib/presentation";
+import { api } from "@/lib/http";
 import Modal from "./ui/Modal";
 type Version = { version: number; snapshot: Entity; created_at: string };
 export default function ThinkingChanges({
@@ -24,12 +25,10 @@ export default function ThinkingChanges({
       rows
         .filter((e) => ["record", "review"].includes(e.kind))
         .map(async (e) => {
-          const r = await fetch(`/api/entities/${e.id}/history`);
-          if (!r.ok)
-            throw new Error(
-              "部分历史暂时无法载入，下面仍可查看已保存的当前结构。",
-            );
-          return [e.id, await r.json()] as [string, Version[]];
+          return [e.id, await api<Version[]>(`entities/${e.id}/history`)] as [
+            string,
+            Version[],
+          ];
         }),
     ).then((results) => {
       if (!active) return;

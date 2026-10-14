@@ -9,14 +9,15 @@ import {
 } from "node:fs";
 const action = process.argv[2],
   target = resolve(process.argv[3] || "backups/thoughts.sqlite");
-const { db, databasePath } = await import("../lib/db");
+const { db, databasePath, getDatabase } = await import("../lib/db");
 if (action === "init") {
+  getDatabase();
   console.log("数据库初始化完成：" + databasePath);
   db.close();
 } else if (action === "backup") {
   if (target === databasePath) throw new Error("备份路径不能与数据库相同");
   mkdirSync(dirname(target), { recursive: true });
-  await backup(db, target);
+  await backup(getDatabase(), target);
   chmodSync(target, 0o600);
   const check = new DatabaseSync(target, { readOnly: true });
   if (check.prepare("PRAGMA integrity_check").get()?.integrity_check !== "ok")

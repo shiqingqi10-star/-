@@ -5,11 +5,12 @@ import { spawn } from "node:child_process";
 const origin = process.env.PLAYWRIGHT_BASE_URL || "http://localhost:3100";
 const port = new URL(origin).port || "3100";
 const directory = mkdtempSync(join(tmpdir(), "thought-ui-"));
+const production = process.env.BROWSER_TEST_MODE === "production";
 const child = spawn(
   process.execPath,
   [
     resolve("node_modules/next/dist/bin/next"),
-    "dev",
+    production ? "start" : "dev",
     "--hostname",
     "127.0.0.1",
     "--port",
@@ -23,7 +24,9 @@ const child = spawn(
       DATABASE_PATH: join(directory, "test.sqlite"),
       APP_ORIGIN: origin,
       DEEPSEEK_API_KEY: "",
-      NEXT_DIST_DIR: ".next-ui",
+      NEXT_DIST_DIR: production
+        ? process.env.NEXT_DIST_DIR || ".next"
+        : ".next-ui",
     },
   },
 );

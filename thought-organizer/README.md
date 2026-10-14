@@ -1,5 +1,7 @@
 # 思路整理器 V1
 
+本轮核验与修复版为 **思考空间 · 2026.10.13-r2**，登录页底部和设置顶部可查看。[下载本轮r2工程包](releases/thought-organizer-thinking-space-2026-10-13-r2.zip)，打开GitHub文件页后选择Download raw file。请阅读[逐项核验、数据库锁实测及Windows更新说明](docs/VERIFICATION-2026-10-13-r2.md)。此前不带-r2的ZIP是历史版，不包含本轮锁修复。
+
 这是独立的中文私人思考工具。前端与完整业务后端使用 Next.js App Router、React、TypeScript、Tailwind CSS 和 Zod；正式数据使用 Node.js 原生 SQLite 驱动保存到真实文件数据库。`localStorage`只保留编辑失败草稿，不作为正式数据源。没有 AI 密钥也能注册、登录、整理卡片、编辑多前提关系、管理问题/任务/事件、记录证据、验证、复盘、搜索、回收站和导入导出。
 
 ## 环境与启动
@@ -104,7 +106,7 @@ CHROMIUM_PATH=/usr/bin/chromium npm run test:browser
 
 ## 思考空间更新（2026.10.13）
 
-本版设置页显示 `界面版本：思考空间 · 2026.10.13`。首页以“有什么事情，你想理清楚？”开始，只需输入正文。“保存，开始整理”确认原文保存后进入整理；“先存着”留在记录页。简称取自第一句，原文的换行和空格完整保留。没有AI密钥也能完成所有手动操作。
+本版登录页和设置页显示 `界面版本：思考空间 · 2026.10.13-r2`。首页以“有什么事情，你想理清楚？”开始，只需输入正文。“保存，开始整理”确认原文保存后进入整理；“先存着”留在记录页。简称取自第一句，原文的换行和空格完整保留。没有AI密钥也能完成所有手动操作。
 
 三个主要入口是“我的思考”“待想清楚”“下一步”。全部思考和未整理视图位于我的思考，搜索在顶部，设置、账号与回收站在侧栏底部。今日关注在下一步中访问。
 
@@ -132,6 +134,10 @@ npm run typecheck
 npm run check
 npm test
 npm run test:browser
+# 使用刚构建的默认.next生产模式，并启动独立临时数据库
+# Windows PowerShell先设置 $env:BROWSER_TEST_MODE="production"
+# Linux/macOS：BROWSER_TEST_MODE=production npm run test:browser
+npm run test:database:runtime
 # 先 npm run build，再用独立临时数据库验证生产服务关闭和重启
 npm run test:restart
 ```

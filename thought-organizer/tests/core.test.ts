@@ -12,7 +12,7 @@ process.env.DATABASE_PATH = join(
 const service = await import("../lib/service");
 const auth = await import("../lib/auth");
 const ai = await import("../lib/ai");
-const { db, run, one } = await import("../lib/db");
+const { getDatabase, run, one } = await import("../lib/db");
 const { cycleWarnings, dateInZone } = await import("../lib/schema");
 test("AI用量按账号时区统计今日与月度，同时保留滚动额度", (t) => {
   t.mock.timers.enable({
@@ -474,7 +474,7 @@ test("服务端数据库备份恢复完整性", async () => {
     mkdtempSync(join(tmpdir(), "thought-backup-")),
     "restored.sqlite",
   );
-  await backup(db, path);
+  await backup(getDatabase(), path);
   const restored = new DatabaseSync(path, { readOnly: true });
   assert.equal(
     restored.prepare("PRAGMA integrity_check").get()?.integrity_check,
@@ -753,4 +753,40 @@ test("独立分析必须明确选取；实际输入不包含无关记录或另�
   } finally {
     delete process.env.DEEPSEEK_API_KEY;
   }
+});
+
+test("注册与首个会话原子保存：会话写入失败不留下不可重试的半成账号", () => {
+  const email = "atomic-registration@test.example",
+    request = new Request("http://localhost:3000/api/auth/register");
+  getDatabase().exec(
+    "CREATE TRIGGER test_fail_session BEFORE INSERT ON sessions BEGIN SELECT RAISE(ABORT,'test-only-session-failure'); END",
+  );
+  try {
+    assert.throws(() =>
+      auth.authAction(
+        "register",
+        { email, password: "safe-atomic-test-password" },
+        request,
+      ),
+    );
+    assert.equal(one("SELECT id FROM users WHERE email=?", email), undefined);
+  } finally {
+    getDatabase().exec("DROP TRIGGER test_fail_session");
+  }
+  const result = auth.authAction(
+    "register",
+    { email, password: "safe-atomic-test-password" },
+    request,
+  );
+  assert(result.cookie.includes("HttpOnly"));
+  assert(one("SELECT id FROM users WHERE email=?", email));
+  assert.throws(
+    () =>
+      auth.authAction(
+        "login",
+        { email, password: "wrong-test-password" },
+        request,
+      ),
+    /邮箱或密码错误/,
+  );
 });
