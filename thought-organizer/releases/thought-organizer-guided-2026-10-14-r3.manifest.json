@@ -1,0 +1,25 @@
+{
+  "version": "追问梳理 · 2026.10.14-r3",
+  "branch": "work",
+  "sourceCommit": "9f65445cb973f6a031d734d2ab85a722db5b0ce8",
+  "zip": "thought-organizer-guided-2026-10-14-r3.zip",
+  "bytes": 1683607,
+  "files": 80,
+  "sha256": "0385c275eba498318978057fbb324d8b53ab9cdebe87dde1575eafe8ca230fd3",
+  "verified": [
+    "CRC",
+    "extraction",
+    "required files",
+    "byte equality to committed source",
+    "no runtime data or real environment"
+  ],
+  "checks": {
+    "typecheck": 0,
+    "check": 0,
+    "test": 0,
+    "build": 0
+  },
+  "unitTests": 38,
+  "productionBrowserTests": 17,
+  "realAI": "not tested"
+}
