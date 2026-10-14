@@ -71,3 +71,17 @@ AI建议采纳幂等：若已有target，重复调用直接返回该项目；旧
 数据库忙锁或锁定返回JSON 503，并有Retry-After: 2；初始化异常也在请求错误边界内，内部SQL、文件路径和凭据不进入响应。正常注册与初始会话在同一事务内保存，同邮箱竞争返回可读400。前端空响应或非JSON响应显示可读失败提示，保留输入。登录页和设置均标记为思考空间 · 2026.10.13-r2。
 
 默认DATABASE_BUSY_TIMEOUT_MS=5000，允许1至30000毫秒，非法值回退到5000。已有WAL与schemaVersion=1只读取初始化状态；新初始化迁移在事务内完成。正常部署建议单实例；有多个实例时每个进程持有自己的SQLite连接，忙锁等待有上限，持续占用仍需处理实际持锁进程，不会自动删除运行数据。
+
+
+## 追问会话（r3增量）
+
+所有接口延续登录、账号隔离、同来源保护、限速与JSON错误。数据库版本2新增表，不改entities模型。
+
+- `POST /api/guidance`：`{content, token: UUID, organize: boolean}`，原文和会话原子保存；同一账号token重试返回已有原文，防重复记录。
+- `POST /api/guidance/:root`：初始化或读取会话，root为已有主题或独立原文，不覆盖旧内容、不自动请求AI。
+- `GET /api/guidance/:root`：读取当前追问、回答、候选、暂停草稿、AI快照及过期状态。
+- `PATCH /api/guidance/:root`：带会话version的冲突保护；action为answer（questionId/text/status: answered|unknown|skipped）、editAnswer（answerId/text/status）、acknowledge（answerId）、direction（goal|concern|basis|unknown|next|judgment）、pause（draft）、basic、prepare或confirm（候选id/text/kind/cardType）。确认事务写入正式记录，重试不重复创建。
+- `POST /api/guidance/:root/ai`：`{version, mode?: 整理思路|检查推导|生成下一步}`，沿用DeepSeek配置与calls额度；返回`{session,stale}`。生成期间输入变化只保留过期快照，不替换当前问题。未配置503，不创建模拟结果。
+- `GET /api/guidance/:root/history`：会话旧版本，包括原回答和候选。编辑回答不改写已确认实体。
+
+JSON备份仍支持schemaVersion=1。新导出额外包含guidance/guidanceHistory；旧备份没有这两项时按空处理。导入在同一事务中映射实体归属/目标，保留来源回答快照，并使历史AI分析过期。Markdown导出也包含问答记录。

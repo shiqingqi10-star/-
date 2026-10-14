@@ -36,6 +36,7 @@ import {
 } from "@/lib/presentation";
 import Editor, { EditRequest } from "./Editor";
 import ThinkingSpace from "./ThinkingSpace";
+import GuidedThinking from "./GuidedThinking";
 import ThinkingChanges from "./ThinkingChanges";
 import {
   UI_VERSION,
@@ -64,6 +65,7 @@ export default function Workspace() {
     [topic, setTopic] = useState<string | null>(null),
     [tab, setTab] = useState<Kind>("card"),
     [graph, setGraph] = useState(false),
+    [advanced, setAdvanced] = useState(false),
     [edit, setEdit] = useState<EditRequest | null>(null),
     [detail, setDetail] = useState<Entity | null>(null),
     [notice, setNotice] = useState(""),
@@ -100,7 +102,9 @@ export default function Workspace() {
       comment: string;
     } | null>(null);
   const topicRef = useRef<string | null>(null),
-    quickRef = useRef("");
+    quickRef = useRef(""),
+    quickGate = useRef(false),
+    quickToken = useRef<{ content: string; token: string } | null>(null);
   useEffect(() => {
     topicRef.current = topic;
   }, [topic]);
@@ -130,6 +134,7 @@ export default function Workspace() {
           if (root) {
             setTopic(root.id);
             setPage("思考空间");
+            setAdvanced(location.advanced === true);
             setTab(rememberedKind(root.data.lastPosition || location.tab));
           }
         } catch {}
@@ -216,6 +221,7 @@ export default function Workspace() {
   }
   function navigate(next: string) {
     setPage(next);
+    setAdvanced(false);
     if (user)
       try {
         localStorage.removeItem("thought-location:" + user.id);
@@ -233,6 +239,7 @@ export default function Workspace() {
     setDetail(null);
   }
   function openTopic(e: Entity) {
+    setAdvanced(false);
     setTopic(e.id);
     setPage("思考空间");
     if (user)
@@ -306,6 +313,7 @@ export default function Workspace() {
       if (parent) {
         openTopic(parent);
         setTab(e.kind);
+        setAdvanced(true);
         setDetail(e);
         return;
       }
@@ -319,6 +327,7 @@ export default function Workspace() {
     if (root) {
       openTopic(root);
       setTab(e.kind);
+      setAdvanced(true);
       setDetail(e);
       return;
     }
@@ -337,7 +346,7 @@ export default function Workspace() {
       try {
         localStorage.setItem(
           "thought-location:" + user.id,
-          JSON.stringify({ root: topic, tab: kind }),
+          JSON.stringify({ root: topic, tab: kind, advanced: true }),
         );
       } catch {}
     const current = items.find((e) => e.id === topic);
@@ -551,20 +560,40 @@ export default function Workspace() {
   }
   async function saveQuick(organize: boolean) {
     const content = quick;
-    if (!content.trim() || busy || !user) return;
+    if (!content.trim() || busy || quickGate.current || !user) return;
+    quickGate.current = true;
+    if (quickToken.current?.content !== content) {
+      let stored: { content: string; token: string } | null = null;
+      try {
+        stored = JSON.parse(
+          localStorage.getItem("thought-draft:" + user.id + ":quick-token") ||
+            "null",
+        );
+      } catch {}
+      quickToken.current =
+        stored?.content === content && stored.token
+          ? stored
+          : { content, token: crypto.randomUUID() };
+      try {
+        localStorage.setItem(
+          "thought-draft:" + user.id + ":quick-token",
+          JSON.stringify(quickToken.current),
+        );
+      } catch {}
+    }
     setBusy(true);
     setError("");
     setQuickState("保存中…");
     try {
-      const saved = await api<Entity>("entities", "POST", {
-        kind: "record",
-        topic: null,
-        data: {
-          content,
-          title: shortName(content),
-          status: organize ? "整理中" : "未整理",
-        },
+      const saved = await api<Entity>("guidance", "POST", {
+        content,
+        token: quickToken.current.token,
+        organize,
       });
+      quickToken.current = null;
+      try {
+        localStorage.removeItem("thought-draft:" + user.id + ":quick-token");
+      } catch {}
       setItems((rows) => [saved, ...rows.filter((e) => e.id !== saved.id)]);
       if (quickRef.current === content) {
         setQuick("");
@@ -587,6 +616,7 @@ export default function Workspace() {
       setError(e instanceof Error ? e.message : "保存失败，请重试。");
       setQuickState("保存失败 · 本地草稿仍保留");
     } finally {
+      quickGate.current = false;
       setBusy(false);
     }
   }
@@ -1016,9 +1046,11 @@ export default function Workspace() {
               )}
               <h1 tabIndex={-1}>
                 {page === "思考空间"
-                  ? String(t ? entityName(t) : "思考已移入回收站")
+                  ? advanced
+                    ? String(t ? entityName(t) : "思考已移入回收站")
+                    : "梳理这个问题"
                   : page === "我的思考"
-                    ? "有什么事情，你想理清楚？"
+                    ? "有什么问题，你想理清楚？"
                     : page}
               </h1>
               {page === "今日关注" && (
@@ -1037,8 +1069,9 @@ export default function Workspace() {
                 新建一个思考
               </button>
             )}
-            {page === "思考空间" && t && (
+            {page === "思考空间" && t && advanced && (
               <div className="bar">
+                <button onClick={() => setAdvanced(false)}>返回当前追问</button>
                 <button onClick={() => setAiOpen(true)}>
                   <LightningBoltIcon />
                   AI助手
@@ -1078,9 +1111,6 @@ export default function Workspace() {
                 className="quick-record surface"
                 aria-label="记录一个思考"
               >
-                <p className="muted">
-                  可以是一段想法、一个纠结，或者一件还没想明白的事。
-                </p>
                 <textarea
                   aria-label="写下想法"
                   value={quick}
@@ -1097,7 +1127,7 @@ export default function Workspace() {
                       setError("无法保留本地草稿，请复制重要内容。");
                     }
                   }}
-                  placeholder="把此刻的想法写在这里…"
+                  placeholder="写下你的纠结、想法或计划，不用先组织好语言。"
                 />
                 <div className="quick-footer">
                   <span className="muted" role="status">
@@ -1119,7 +1149,7 @@ export default function Workspace() {
                       disabled={busy || !quick.trim()}
                       onClick={() => void saveQuick(true)}
                     >
-                      {busy ? "保存中…" : "保存，开始整理"}
+                      {busy ? "保存中…" : "开始梳理"}
                     </button>
                   </div>
                 </div>
@@ -1254,7 +1284,27 @@ export default function Workspace() {
               )}
             </>
           )}
-          {page === "思考空间" && t && (
+          {page === "思考空间" && t && !advanced && (
+            <GuidedThinking
+              key={t.id}
+              root={t}
+              rows={thinkingScope(alive, t)}
+              user={user}
+              onRefresh={refresh}
+              onEdit={openEdit}
+              onHistory={(e) => void openHistory(e)}
+              onOpen={openDetail}
+              onAdvanced={() => setAdvanced(true)}
+              onGraph={() => {
+                setAdvanced(true);
+                setTab("card");
+                setGraph(true);
+              }}
+              onAdd={add}
+              onExport={() => navigate("设置")}
+            />
+          )}
+          {page === "思考空间" && t && advanced && (
             <ThinkingSpace
               root={t}
               rows={scoped}

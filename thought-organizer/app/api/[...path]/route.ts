@@ -28,6 +28,14 @@ import {
   importData,
   markdown,
 } from "@/lib/service";
+import {
+  startGuide,
+  initializeGuide,
+  getGuide,
+  mutateGuide,
+  generateGuide,
+  guideHistory,
+} from "@/lib/guidance";
 import { analyze, analysisList, applySuggestion, configured } from "@/lib/ai";
 import {
   all,
@@ -162,6 +170,22 @@ async function handle(
         createThinkingItem(user.id, id, v.version, v.kind, v.data),
         201,
       );
+    }
+    if (route === "guidance") {
+      if (!id && req.method === "POST")
+        return reply(startGuide(user.id, b), 201);
+      if (id && req.method === "GET")
+        return reply(
+          action === "history"
+            ? guideHistory(user.id, id)
+            : getGuide(user.id, id),
+        );
+      if (id && req.method === "POST") {
+        if (action === "ai") return reply(await generateGuide(user.id, id, b));
+        return reply(initializeGuide(user.id, id));
+      }
+      if (id && req.method === "PATCH")
+        return reply(mutateGuide(user.id, id, b));
     }
     if (route === "entities") {
       if (req.method === "GET") {

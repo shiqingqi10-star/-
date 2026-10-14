@@ -1,5 +1,6 @@
 import { validateOutput, validateSuggestion } from "./ai-schema";
 import { z } from "zod";
+import { guideSchema } from "./guidance-schema";
 import { randomUUID } from "node:crypto";
 import { all, one, run, transaction, metric } from "./db";
 import {
@@ -494,6 +495,25 @@ export function exportData(owner: string) {
       "SELECT id,topic,mode,snapshot,result,created_at FROM analyses WHERE owner=?",
       owner,
     ),
+    guidance: all<{
+      id: string;
+      root: string;
+      version: number;
+      data: string;
+      updated_at: string;
+    }>(
+      "SELECT id,root,version,data,updated_at FROM guidance_sessions WHERE owner=?",
+      owner,
+    ),
+    guidanceHistory: all<{
+      session_id: string;
+      version: number;
+      data: string;
+      created_at: string;
+    }>(
+      "SELECT session_id,version,data,created_at FROM guidance_versions WHERE owner=?",
+      owner,
+    ),
     suggestions: all(
       "SELECT id,analysis_id,kind,data,status,target,feedback FROM suggestions WHERE owner=?",
       owner,
@@ -671,6 +691,78 @@ export function importData(owner: string, body: unknown) {
         s.feedback,
       );
     }
+    const guideRows = z
+      .array(
+        z
+          .object({
+            id: z.string(),
+            root: z.string(),
+            version: z.number().int().positive(),
+            data: z.string().max(2000000),
+            updated_at: z.iso.datetime(),
+          })
+          .strict(),
+      )
+      .max(10000)
+      .parse(b.guidance || []);
+    const guideIds = new Map<string, string>();
+    const importGuide = (raw: string) => {
+      const d = guideSchema.parse(JSON.parse(raw));
+      for (const c of d.candidates) {
+        if (c.target) c.target = remap(c.target);
+        c.stale = true;
+      }
+      for (const r of d.runs) {
+        r.snapshot = JSON.stringify(rewrite(JSON.parse(r.snapshot)));
+        r.stale = true;
+      }
+      if (d.current?.mode === "ai") d.current.review = true;
+      d.rootSignature = "imported-history";
+      return JSON.stringify(d);
+    };
+    for (const row of guideRows) {
+      if (guideIds.has(row.id)) fail("备份梳理记录重复");
+      const root = remap(row.root),
+        e = get(owner, root, true);
+      if (!(e.kind === "topic" || (e.kind === "record" && !e.topic)))
+        fail("备份梳理归属无效");
+      const id = randomUUID();
+      guideIds.set(row.id, id);
+      run(
+        "INSERT INTO guidance_sessions(id,owner,root,version,data,updated_at) VALUES(?,?,?,?,?,?)",
+        id,
+        owner,
+        root,
+        row.version,
+        importGuide(row.data),
+        row.updated_at,
+      );
+    }
+    const guideVersions = z
+      .array(
+        z
+          .object({
+            session_id: z.string(),
+            version: z.number().int().positive(),
+            data: z.string().max(2000000),
+            created_at: z.iso.datetime(),
+          })
+          .strict(),
+      )
+      .max(100000)
+      .parse(b.guidanceHistory || []);
+    for (const h of guideVersions) {
+      const id = guideIds.get(h.session_id);
+      if (!id) fail("备份梳理历史归属无效");
+      run(
+        "INSERT INTO guidance_versions(session_id,owner,version,data,created_at) VALUES(?,?,?,?,?)",
+        id,
+        owner,
+        h.version,
+        importGuide(h.data),
+        h.created_at,
+      );
+    }
     metric(owner, "import");
     return { imported: mapped.length, ids: Object.fromEntries(map) };
   });
@@ -679,6 +771,31 @@ export function markdown(owner: string) {
   const entries = list(owner);
   return (
     "# 思路整理器\n\n" +
+    all<{ data: string }>(
+      "SELECT data FROM guidance_sessions WHERE owner=?",
+      owner,
+    )
+      .map((row) => {
+        const d = guideSchema.parse(JSON.parse(row.data));
+        return (
+          "## 梳理问答\n\n" +
+          d.answers
+            .map(
+              (a) =>
+                a.question.text +
+                "\n\n" +
+                (a.status === "skipped"
+                  ? "已跳过"
+                  : a.status === "unknown"
+                    ? "暂时不知道：" + a.text
+                    : a.text) +
+                (a.review ? "（需重新核对）" : ""),
+            )
+            .join("\n\n")
+        );
+      })
+      .join("\n\n") +
+    "\n\n" +
     entries
       .map(
         (e) =>

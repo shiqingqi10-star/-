@@ -102,12 +102,14 @@ export function getDatabase(): DatabaseSync {
             .get()?.version || 0,
         )
       : 0;
-    if (version > 1) throw new Error("Unsupported database schema version");
-    if (version < 1) {
+    if (version > 2) throw new Error("Unsupported database schema version");
+    if (version < 2) {
       stage = "migration";
       opened.exec("BEGIN IMMEDIATE");
       try {
-        opened.exec(readFileSync(resolve("lib/migration.sql"), "utf8"));
+        if (version < 1)
+          opened.exec(readFileSync(resolve("lib/migration.sql"), "utf8"));
+        opened.exec(readFileSync(resolve("lib/migration-2.sql"), "utf8"));
         opened.exec("COMMIT");
       } catch (e) {
         try {

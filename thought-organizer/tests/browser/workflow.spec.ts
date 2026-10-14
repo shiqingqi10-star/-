@@ -35,14 +35,33 @@ async function get(request: APIRequestContext, id: string): Promise<Entity> {
   expect(r.ok()).toBeTruthy();
   return r.json();
 }
+async function advancedPage(page: Page) {
+  await expect(
+    page
+      .getByRole("heading", { name: "梳理这个问题", exact: true })
+      .or(page.getByRole("group", { name: "思考阶段", exact: true })),
+  ).toBeVisible();
+  if (
+    await page
+      .getByRole("heading", { name: "梳理这个问题", exact: true })
+      .isVisible()
+  ) {
+    await page.getByRole("button", { name: "更多操作：梳理" }).click();
+    await page
+      .getByRole("menuitem", { name: "高级编辑与完整整理", exact: true })
+      .click();
+  }
+}
 async function topicPage(page: Page, title: string) {
   await page.goto("/");
   await page.getByRole("button", { name: title, exact: true }).first().click();
+  await advancedPage(page);
   await expect(
     page.getByRole("heading", { name: title, exact: true }),
   ).toBeVisible();
 }
 async function tab(page: Page, label: string) {
+  await advancedPage(page);
   const stage =
     label === "原始想法"
       ? "写下来"
@@ -123,7 +142,7 @@ test("快速记录、草稿、真实保存和刷新恢复，退出后重新登�
   await page.getByRole("button", { name: "注册并登录" }).click();
   await expect(
     page.getByRole("heading", {
-      name: "有什么事情，你想理清楚？",
+      name: "有什么问题，你想理清楚？",
       exact: true,
     }),
   ).toBeVisible();
@@ -163,7 +182,9 @@ test("快速记录、草稿、真实保存和刷新恢复，退出后重新登�
   expect(errors).toEqual([]);
 });
 
-test("主题记忆、三个阶段、原文版本、卡片关系及关联跳转", async ({ page }) => {
+test("高级整理位置、原有阶段、原文版本、卡片关系及关联跳转", async ({
+  page,
+}) => {
   await account(page);
   const t = await create(page.request, "topic", {
     title: "学习一个新领域",
@@ -570,7 +591,7 @@ test("手机导航、弹窗焦点、长标题、逻辑图局部滚动及页面�
   await page.goto("/");
   await expect(
     page.getByRole("heading", {
-      name: "有什么事情，你想理清楚？",
+      name: "有什么问题，你想理清楚？",
       exact: true,
     }),
   ).toBeVisible();
@@ -596,6 +617,7 @@ test("手机导航、弹窗焦点、长标题、逻辑图局部滚动及页面�
       exact: true,
     })
     .click();
+  await advancedPage(page);
   await page.screenshot({
     path: "data/visual-topic-desktop.png",
     fullPage: true,
@@ -703,7 +725,7 @@ test("无AI完整手动场景：独立原文、观点、疑问、关联行动、
     page.getByRole("navigation", { name: "主要导航" }).getByRole("button"),
   ).toHaveCount(3);
   await expect(
-    page.getByRole("heading", { name: "有什么事情，你想理清楚？" }),
+    page.getByRole("heading", { name: "有什么问题，你想理清楚？" }),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "继续上次的思考" }),
@@ -711,9 +733,8 @@ test("无AI完整手动场景：独立原文、观点、疑问、关联行动、
   const original =
     "我想参加周末的活动，但怕占用时间，又担心错过认识新朋友的机会。\n\n  这段空白和补充文字也要完整保存。  ";
   await page.getByLabel("写下想法", { exact: true }).fill(original);
-  await page
-    .getByRole("button", { name: "保存，开始整理", exact: true })
-    .click();
+  await page.getByRole("button", { name: "开始梳理", exact: true }).click();
+  await advancedPage(page);
   await expect(page.getByRole("group", { name: "思考阶段" })).toBeVisible();
   const rows: Entity[] = await (await page.request.get("/api/entities")).json();
   const root = rows.find((e) => e.kind === "record")!;
@@ -853,7 +874,7 @@ test("无AI完整手动场景：独立原文、观点、疑问、关联行动、
   });
   await mobileNav(page, "设置");
   await expect(
-    page.getByText("界面版本：思考空间 · 2026.10.13-r2", { exact: true }),
+    page.getByText("界面版本：追问梳理 · 2026.10.14-r3", { exact: true }),
   ).toBeVisible();
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.screenshot({
@@ -870,7 +891,7 @@ test("保存失败保留完整草稿；独立AI范围不泄露无关思考，保
   await page.goto("/");
   const original = "保存失败也不能丢失的原文。\n完整内容。";
   await page.getByLabel("写下想法", { exact: true }).fill(original);
-  await page.route("**/api/entities", async (route) => {
+  await page.route("**/api/guidance", async (route) => {
     if (route.request().method() === "POST")
       await route.fulfill({
         status: 500,
@@ -879,9 +900,7 @@ test("保存失败保留完整草稿；独立AI范围不泄露无关思考，保
       });
     else await route.continue();
   });
-  await page
-    .getByRole("button", { name: "保存，开始整理", exact: true })
-    .click();
+  await page.getByRole("button", { name: "开始梳理", exact: true }).click();
   await expect(
     page.getByRole("alert").filter({ hasText: "测试保存失败" }),
   ).toBeVisible();
@@ -893,14 +912,13 @@ test("保存失败保留完整草稿；独立AI范围不泄露无关思考，保
   await expect(page.getByLabel("写下想法", { exact: true })).toHaveValue(
     original,
   );
-  await page.unroute("**/api/entities");
+  await page.unroute("**/api/guidance");
   await create(page.request, "record", {
     title: "无关思考",
     content: "这段无关私人内容不能进入分析",
   });
-  await page
-    .getByRole("button", { name: "保存，开始整理", exact: true })
-    .click();
+  await page.getByRole("button", { name: "开始梳理", exact: true }).click();
+  await advancedPage(page);
   await expect(page.getByRole("group", { name: "思考阶段" })).toBeVisible();
   await page.getByRole("button", { name: "AI助手", exact: true }).click();
   const ai = page.getByRole("dialog", { name: "AI助手", exact: true });
@@ -1047,9 +1065,8 @@ test("原文保存成功但列表刷新失败时仍确认保存并进入真实�
       body: JSON.stringify({ error: "列表暂时无法读取" }),
     }),
   );
-  await page
-    .getByRole("button", { name: "保存，开始整理", exact: true })
-    .click();
+  await page.getByRole("button", { name: "开始梳理", exact: true }).click();
+  await advancedPage(page);
   await expect(page.getByRole("group", { name: "思考阶段" })).toBeVisible();
   await expect(
     page
@@ -1066,7 +1083,7 @@ test("登录和注册收到HTML或空响应时显示可读错误，版本在登�
 }) => {
   await page.goto("/");
   await expect(
-    page.getByText("界面版本：思考空间 · 2026.10.13-r2", { exact: false }),
+    page.getByText("界面版本：追问梳理 · 2026.10.14-r3", { exact: false }),
   ).toBeVisible();
   await page
     .getByLabel("邮箱", { exact: true })
@@ -1128,6 +1145,7 @@ test("首页实际只显示最近三项，可继续主题和独立记录且不�
     page.getByRole("navigation", { name: "主要导航" }).getByRole("button"),
   ).toHaveCount(3);
   await page.getByRole("button", { name: "独立思考三", exact: true }).click();
+  await advancedPage(page);
   await expect(
     page.getByRole("group", { name: "思考阶段" }).getByRole("button"),
   ).toHaveCount(3);

@@ -7,22 +7,26 @@ export default function Modal({
   onClose,
   drawer = false,
   description,
+  returnFocus,
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
   drawer?: boolean;
   description?: string;
+  returnFocus?: HTMLElement | null;
 }) {
   const dialog = useRef<HTMLDialogElement>(null),
     close = useRef(onClose),
+    returnTarget = useRef(returnFocus),
     id = useId();
   useEffect(() => {
     close.current = onClose;
   }, [onClose]);
   useEffect(() => {
     const element = dialog.current!;
-    const opener = document.activeElement as HTMLElement | null;
+    const opener =
+      returnTarget.current || (document.activeElement as HTMLElement | null);
     element.showModal();
     const initial = element.querySelector<HTMLElement>(
       '.modal-body input:not([type="checkbox"]), .modal-body textarea, .modal-body select',

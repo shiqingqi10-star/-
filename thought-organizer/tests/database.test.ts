@@ -1,10 +1,11 @@
 import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { DatabaseSync } from "node:sqlite";
 let generation = 0;
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), "thought-db-test-"));
@@ -70,7 +71,7 @@ test("先安装等待时间：另一进程的短暂写锁释放后可切换WAL�
     m.one<{ version: number }>(
       "SELECT max(version) version FROM schema_migrations",
     )!.version,
-    1,
+    2,
   );
   await lock.exited;
 });
@@ -127,4 +128,116 @@ test("已有WAL数据库读写连接无需重新迁移；事务失败回滚且�
   const next = m.getDatabase();
   assert.notEqual(next, database);
   assert.equal(m.one<{ value: number }>("SELECT value FROM probe")!.value, 2);
+});
+
+test("v1增量迁移到v2保留用户、原文、历史与关联，并可重复启动", async (t) => {
+  const m = await fixture(t),
+    old = new DatabaseSync(m.databasePath);
+  old.exec(readFileSync("lib/migration.sql", "utf8"));
+  old
+    .prepare("INSERT INTO users(id,email,password,created_at) VALUES(?,?,?,?)")
+    .run(
+      "legacy-user",
+      "legacy@test.example",
+      "unchanged-password-hash",
+      "2026-10-01T00:00:00.000Z",
+    );
+  const content = JSON.stringify({
+    content: "旧原文，不能删除。\n 保留空格。",
+    tags: "旧标签",
+    status: "未整理",
+  });
+  old
+    .prepare("INSERT INTO entities VALUES(?,?,?,?,?,?,?,NULL,?,?)")
+    .run(
+      "legacy-record",
+      "legacy-user",
+      "record",
+      null,
+      3,
+      2,
+      content,
+      "2026-10-01T00:00:00.000Z",
+      "2026-10-01T00:00:00.000Z",
+    );
+  const card = JSON.stringify({
+    content: "已有假设",
+    type: "假设",
+    sourceRefs: ["legacy-record"],
+  });
+  old
+    .prepare("INSERT INTO entities VALUES(?,?,?,?,?,?,?,NULL,?,?)")
+    .run(
+      "legacy-card",
+      "legacy-user",
+      "card",
+      null,
+      1,
+      1,
+      card,
+      "2026-10-01T00:00:00.000Z",
+      "2026-10-01T00:00:00.000Z",
+    );
+  old
+    .prepare("INSERT INTO links VALUES(?,?,?,?)")
+    .run("legacy-user", "legacy-card", "sourceRefs", "legacy-record");
+  const snapshot = JSON.stringify({
+    id: "legacy-record",
+    owner: "legacy-user",
+    kind: "record",
+    topic: null,
+    version: 2,
+    contentVersion: 1,
+    data: JSON.parse(content),
+    deletedAt: null,
+    createdAt: "2026-10-01T00:00:00.000Z",
+    updatedAt: "2026-10-01T00:00:00.000Z",
+  });
+  old
+    .prepare(
+      "INSERT INTO history(entity_id,owner,version,snapshot,created_at) VALUES(?,?,?,?,?)",
+    )
+    .run(
+      "legacy-record",
+      "legacy-user",
+      2,
+      snapshot,
+      "2026-10-01T00:00:00.000Z",
+    );
+  old.close();
+  m.getDatabase();
+  assert.equal(
+    m.one<{ data: string }>(
+      "SELECT data FROM entities WHERE id='legacy-record'",
+    )!.data,
+    content,
+  );
+  assert.equal(
+    m.one<{ password: string }>("SELECT password FROM users")!.password,
+    "unchanged-password-hash",
+  );
+  assert.equal(
+    m.one<{ version: number }>(
+      "SELECT max(version) version FROM schema_migrations",
+    )!.version,
+    2,
+  );
+  assert.equal(
+    m.one<{ snapshot: string }>("SELECT snapshot FROM history")!.snapshot,
+    snapshot,
+  );
+  assert.equal(
+    m.one<{ target: string }>(
+      "SELECT target FROM links WHERE source='legacy-card'",
+    )!.target,
+    "legacy-record",
+  );
+  m.closeDatabase();
+  m.getDatabase();
+  assert.equal(m.all("PRAGMA foreign_key_check").length, 0);
+  assert.equal(
+    m.one<{ integrity_check: string }>("PRAGMA integrity_check")!
+      .integrity_check,
+    "ok",
+  );
 });

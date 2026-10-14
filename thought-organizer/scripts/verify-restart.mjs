@@ -99,6 +99,25 @@ try {
   const root = await created.json();
   await page.goto(origin);
   await page.getByRole("button", { name: "旧版独立思考", exact: true }).click();
+  await page
+    .getByLabel("你的回答", { exact: true })
+    .fill("保留已有思考，并继续弄清条件");
+  await page.getByRole("button", { name: "继续", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "最让你犹豫的具体是什么？" }),
+  ).toBeVisible();
+  await page
+    .getByLabel("你的回答", { exact: true })
+    .fill("重启后继续写的回答草稿");
+  await page.getByRole("button", { name: "先到这里", exact: true }).click();
+  await expect(page.locator(".guided-heading")).toContainText("草稿已保存");
+  const guideBefore = await (
+    await page.request.get(origin + "/api/guidance/" + root.id)
+  ).json();
+  await page.getByRole("button", { name: "更多操作：梳理" }).click();
+  await page
+    .getByRole("menuitem", { name: "高级编辑与完整整理", exact: true })
+    .click();
   await page.getByRole("button", { name: "新建思路卡片", exact: true }).click();
   await page.getByLabel("内容 *", { exact: true }).fill("重启后仍能看到的观点");
   await page
@@ -125,6 +144,21 @@ try {
   ).toHaveAttribute("aria-pressed", "true");
   const after = await (await page.request.get(origin + "/api/entities")).json();
   assert.deepEqual(after, before);
+  const guideAfter = await (
+    await page.request.get(origin + "/api/guidance/" + root.id)
+  ).json();
+  assert.deepEqual(guideAfter, guideBefore);
+  await page.getByRole("button", { name: "返回当前追问", exact: true }).click();
+  await expect(page.getByLabel("你的回答", { exact: true })).toHaveValue(
+    "重启后继续写的回答草稿",
+  );
+  await expect(
+    page.getByRole("heading", { name: "最让你犹豫的具体是什么？" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "更多操作：梳理" }).click();
+  await page
+    .getByRole("menuitem", { name: "高级编辑与完整整理", exact: true })
+    .click();
   const savedRoot = after.find((e) => e.id === root.id);
   assert.equal(savedRoot.data.content, content);
   assert.equal(savedRoot.data.tags, "旧标签");
@@ -136,10 +170,10 @@ try {
   ).toBeVisible();
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await expect(
-    page.getByText("界面版本：思考空间 · 2026.10.13-r2", { exact: true }),
+    page.getByText("界面版本：追问梳理 · 2026.10.14-r3", { exact: true }),
   ).toBeVisible();
   console.log(
-    "PASS: production restart preserves authentication, complete old records, references, cards, versions and saved stage; UI version confirmed",
+    "PASS: production restart preserves authentication, complete old records, references, cards, versions, saved question, answers, paused draft and advanced location; UI version confirmed",
   );
 } finally {
   await browser?.close();

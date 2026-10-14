@@ -23,6 +23,28 @@ export async function provider(
   answers: string,
   fetcher: typeof fetch = fetch,
 ) {
+  const result = await requestAI(
+    systemPrompt,
+    {
+      mode,
+      answers,
+      scope: snapshot.map(({ owner: _, ...e }) => {
+        void _;
+        return e;
+      }),
+    },
+    fetcher,
+  );
+  return {
+    output: validateOutput(result.value, snapshot),
+    tokens: result.tokens,
+  };
+}
+export async function requestAI(
+  prompt: string,
+  input: unknown,
+  fetcher: typeof fetch = fetch,
+) {
   if (!configured()) fail("AI未配置", 503);
   const base = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com";
   const u = new URL(base);
@@ -43,17 +65,10 @@ export async function provider(
     body: JSON.stringify({
       model: process.env.DEEPSEEK_MODEL || "deepseek-chat",
       messages: [
-        { role: "system", content: systemPrompt },
+        { role: "system", content: prompt },
         {
           role: "user",
-          content: JSON.stringify({
-            mode,
-            answers,
-            scope: snapshot.map(({ owner: _, ...e }) => {
-              void _;
-              return e;
-            }),
-          }),
+          content: JSON.stringify(input),
         },
       ],
       response_format: { type: "json_object" },
@@ -91,11 +106,12 @@ export async function provider(
     fail("AI输出不是合法JSON", 502);
   }
   return {
-    output: validateOutput(value, snapshot),
+    value: value as unknown,
     tokens: Number(envelope.usage?.total_tokens || 0),
   };
 }
-function reserve(owner: string) {
+
+export function reserve(owner: string) {
   return transaction(() => {
     const now = Date.now();
     run(

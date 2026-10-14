@@ -1,0 +1,3 @@
+CREATE TABLE IF NOT EXISTS guidance_sessions(id TEXT PRIMARY KEY,owner TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,root TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,version INTEGER NOT NULL,data TEXT NOT NULL,updated_at TEXT NOT NULL,start_token TEXT,UNIQUE(owner,root),UNIQUE(owner,start_token));
+CREATE TABLE IF NOT EXISTS guidance_versions(id INTEGER PRIMARY KEY,session_id TEXT NOT NULL REFERENCES guidance_sessions(id) ON DELETE CASCADE,owner TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,version INTEGER NOT NULL,data TEXT NOT NULL,created_at TEXT NOT NULL);
+INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(2,datetime('now'));

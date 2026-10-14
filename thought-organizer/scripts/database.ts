@@ -31,8 +31,13 @@ if (action === "init") {
   const check = new DatabaseSync(target, { readOnly: true });
   if (
     check.prepare("PRAGMA integrity_check").get()?.integrity_check !== "ok" ||
-    check.prepare("SELECT max(version) version FROM schema_migrations").get()
-      ?.version !== 1 ||
+    ![1, 2].includes(
+      Number(
+        check
+          .prepare("SELECT max(version) version FROM schema_migrations")
+          .get()?.version,
+      ),
+    ) ||
     check.prepare("PRAGMA foreign_key_check").all().length > 0
   )
     throw new Error("不兼容或损坏的备份");
