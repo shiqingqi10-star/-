@@ -38,7 +38,11 @@ export function databaseDiagnostic(error: unknown) {
     sqliteErrcode: typeof e?.errcode === "number" ? e.errcode : undefined,
   };
 }
-type Connection = { database: DatabaseSync; depth: number };
+type Connection = {
+  database: DatabaseSync;
+  depth: number;
+  schemaVersion?: number;
+};
 // Survives module re-evaluation in Next development, scoped by absolute path.
 const globalState = globalThis as typeof globalThis & {
   __thoughtDatabaseConnectionsV2?: Map<string, Connection>;
@@ -65,7 +69,18 @@ function journalModeRetry<T>(fn: () => T, timeout: number): T {
 }
 export function getDatabase(): DatabaseSync {
   const cached = connections.get(databasePath);
-  if (cached?.database.isOpen) return cached.database;
+  if (cached?.database.isOpen && cached.schemaVersion === 3)
+    return cached.database;
+  // Development reload may reuse a connection opened by an older application.
+  if (cached?.database.isOpen) {
+    if (cached.depth)
+      throw new DatabaseUnavailableError(
+        true,
+        "migration-cache",
+        new Error("Active transaction prevents schema upgrade"),
+      );
+    cached.database.close();
+  }
   connections.delete(databasePath);
   let opened: DatabaseSync | undefined,
     stage = "open";
@@ -102,14 +117,16 @@ export function getDatabase(): DatabaseSync {
             .get()?.version || 0,
         )
       : 0;
-    if (version > 2) throw new Error("Unsupported database schema version");
-    if (version < 2) {
+    if (version > 3) throw new Error("Unsupported database schema version");
+    if (version < 3) {
       stage = "migration";
       opened.exec("BEGIN IMMEDIATE");
       try {
         if (version < 1)
           opened.exec(readFileSync(resolve("lib/migration.sql"), "utf8"));
-        opened.exec(readFileSync(resolve("lib/migration-2.sql"), "utf8"));
+        if (version < 2)
+          opened.exec(readFileSync(resolve("lib/migration-2.sql"), "utf8"));
+        opened.exec(readFileSync(resolve("lib/migration-3.sql"), "utf8"));
         opened.exec("COMMIT");
       } catch (e) {
         try {
@@ -118,7 +135,11 @@ export function getDatabase(): DatabaseSync {
         throw e;
       }
     }
-    connections.set(databasePath, { database: opened, depth: 0 });
+    connections.set(databasePath, {
+      database: opened,
+      depth: 0,
+      schemaVersion: 3,
+    });
     return opened;
   } catch (e) {
     try {

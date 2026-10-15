@@ -31,7 +31,7 @@ if (action === "init") {
   const check = new DatabaseSync(target, { readOnly: true });
   if (
     check.prepare("PRAGMA integrity_check").get()?.integrity_check !== "ok" ||
-    ![1, 2].includes(
+    ![1, 2, 3].includes(
       Number(
         check
           .prepare("SELECT max(version) version FROM schema_migrations")

@@ -12,6 +12,14 @@ import {
   GuideSession,
 } from "@/lib/guidance-schema";
 import { entityName, readableTime } from "@/lib/presentation";
+import ThinkingUpdates from "./ThinkingUpdates";
+import {
+  assessmentLabels,
+  scenarios,
+  strategyLabels,
+  Assessment,
+} from "@/lib/guidance-rules";
+import { isJudgment, judgmentText } from "@/lib/thinking";
 import { User } from "./Settings";
 import Modal from "./ui/Modal";
 import Menu from "./ui/Menu";
@@ -20,7 +28,8 @@ type Choice = Pick<GuideCandidate, "id" | "text" | "kind" | "cardType"> & {
 };
 export default function GuidedThinking({
   root,
-  rows,
+  rows: baseRows,
+  items,
   user,
   onRefresh,
   onEdit,
@@ -33,6 +42,7 @@ export default function GuidedThinking({
 }: {
   root: Entity;
   rows: Entity[];
+  items: Entity[];
   user: User;
   onRefresh: () => Promise<void>;
   onEdit: (e: Entity) => void;
@@ -49,7 +59,7 @@ export default function GuidedThinking({
     [error, setError] = useState(""),
     [saved, setSaved] = useState(""),
     [hint, setHint] = useState(false),
-    [rephrased, setRephrased] = useState(false),
+    [assessment, setAssessment] = useState<Assessment>("unspecified"),
     [results, setResults] = useState(false),
     [preview, setPreview] = useState<Choice[] | null>(null),
     [editing, setEditing] = useState<GuideAnswer | null>(null),
@@ -61,6 +71,7 @@ export default function GuidedThinking({
     [allCandidates, setAllCandidates] = useState(false),
     [previewFocus, setPreviewFocus] = useState<HTMLElement | null>(null);
   const gate = useRef(false),
+    loadEpoch = useRef(0),
     textarea = useRef<HTMLTextAreaElement>(null),
     valueRef = useRef(""),
     sessionRef = useRef<GuideSession | null>(null);
@@ -71,14 +82,24 @@ export default function GuidedThinking({
   );
   const accept = useCallback(
     (s: GuideSession, retain?: string) => {
+      if (
+        sessionRef.current?.id === s.id &&
+        sessionRef.current.version > s.version
+      )
+        return;
       sessionRef.current = s;
       setSession(s);
       setHint(false);
-      setRephrased(false);
+      setAssessment("unspecified");
       let text = retain ?? s.data.draft;
       if (retain === undefined)
         try {
           text = localStorage.getItem(draftKey(s)) ?? text;
+        } catch {}
+      if (retain !== undefined)
+        try {
+          if (text) localStorage.setItem(draftKey(s), text);
+          else localStorage.removeItem(draftKey(s));
         } catch {}
       setAnswer(text);
       valueRef.current = text;
@@ -94,9 +115,10 @@ export default function GuidedThinking({
   );
   useEffect(() => {
     let active = true;
+    const epoch = ++loadEpoch.current;
     void api<GuideSession>("guidance/" + root.id, "POST", {})
       .then((s) => {
-        if (active) accept(s);
+        if (active && epoch === loadEpoch.current) accept(s);
       })
       .catch((e) => {
         if (active) setError(e.message);
@@ -112,6 +134,7 @@ export default function GuidedThinking({
   ): Promise<T | null> {
     if (gate.current) return null;
     gate.current = true;
+    loadEpoch.current++;
     setBusy(true);
     setError("");
     setSaved(saving);
@@ -137,25 +160,39 @@ export default function GuidedThinking({
     accept(updated, retain);
     return updated;
   }
-  async function ai(s: GuideSession) {
+  async function ai(
+    s: GuideSession,
+    intent: "next" | "reframe" = "next",
+    reason = "direct",
+  ) {
+    const retained = valueRef.current;
     setSaved("已有记录已保存 · AI追问生成中…");
     const response = await api<{ session: GuideSession; stale: boolean }>(
       "guidance/" + root.id + "/ai",
       "POST",
-      { version: s.version, mode: aiMode },
+      { version: s.version, mode: aiMode, intent, reason },
     );
-    accept(response.session);
+    accept(response.session, intent === "reframe" ? retained : undefined);
     await onRefresh().catch(() => setError("AI结果已保存，用量暂时无法更新。"));
     if (response.stale)
       setError("生成期间内容有变化，这次分析已标为过期，请重试。");
   }
-  async function respond(status: "answered" | "unknown" | "skipped") {
+  async function respond(
+    status: "answered" | "unknown" | "skipped",
+    selectedAssessment: Assessment = assessment,
+  ) {
     const s = sessionRef.current;
     if (!s?.data.current) return;
     const text = valueRef.current;
     await run(async () => {
       const updated = await mutate(
-        { action: "answer", questionId: s.data.current!.id, status, text },
+        {
+          action: "answer",
+          questionId: s.data.current!.id,
+          status,
+          text,
+          assessment: selectedAssessment,
+        },
         "",
       );
       try {
@@ -211,6 +248,56 @@ export default function GuidedThinking({
         );
     });
   }
+  async function reframe(reason = "direct") {
+    const s = sessionRef.current;
+    if (!s) return;
+    await run(
+      async () => {
+        if (s.data.mode === "ai" && user.aiConfigured)
+          try {
+            await ai(s, "reframe", reason);
+          } catch (e) {
+            const latest = await api<GuideSession>("guidance/" + root.id).catch(
+              () => null,
+            );
+            if (latest) accept(latest, valueRef.current);
+            throw e;
+          }
+        else await mutate({ action: "reframe", reason }, valueRef.current);
+      },
+      "换一个思考角度…",
+      "换问法失败 · 当前回答仍保留",
+    );
+  }
+  async function updateContent(body: Record<string, unknown>) {
+    return run(async () => {
+      const r = await api<{ session: GuideSession }>(
+        "guidance/" + root.id + "/updates",
+        "POST",
+        body,
+      );
+      accept(r.session, valueRef.current);
+      setSaved("已保存 · 可以带着新信息继续核对。");
+      await onRefresh().catch(() => setError("内容已保存，列表暂时无法更新。"));
+      return r.session;
+    });
+  }
+  const extraIds = new Set([
+    ...(session?.data.judgments.flatMap((j) => [
+      j.entityId,
+      ...j.evidenceRefs,
+    ]) || []),
+    ...(session?.data.updates.flatMap((u) => u.evidenceRefs) || []),
+  ]);
+  const rows = [
+    ...baseRows,
+    ...items.filter(
+      (e) =>
+        !e.deletedAt &&
+        extraIds.has(e.id) &&
+        !baseRows.some((x) => x.id === e.id),
+    ),
+  ];
   const current = session?.data.current;
   const originals =
     root.kind === "record" ? [root] : rows.filter((e) => e.kind === "record");
@@ -327,14 +414,87 @@ export default function GuidedThinking({
                 )}
                 {current ? (
                   <>
-                    <h2>
-                      {rephrased
-                        ? current.rephrase || current.text
-                        : current.text}
+                    {current.sourceAnswerIds.length > 0 && (
+                      <details className="question-context">
+                        <summary>这次接着哪条回答想</summary>
+                        {current.sourceAnswerIds.map((id) => {
+                          const a = session.data.answers.find(
+                            (a) => a.id === id,
+                          );
+                          return a ? (
+                            <p className="full-body" key={id}>
+                              {a.text || a.question.text}
+                            </p>
+                          ) : null;
+                        })}
+                      </details>
+                    )}
+                    {session.data.runs.at(-1) &&
+                      (() => {
+                        const latest = session.data.runs.at(-1)!;
+                        if (latest.stale) return null;
+                        const result = JSON.parse(latest.result) as {
+                          assessment?: {
+                            answerId: string;
+                            status: string;
+                            reason: string;
+                          };
+                        };
+                        const a =
+                          result.assessment &&
+                          session.data.answers.find(
+                            (a) => a.id === result.assessment!.answerId,
+                          );
+                        return a && result.assessment ? (
+                          <details className="ai-assessment">
+                            <summary>AI对上一答的理解（可纠正）</summary>
+                            <p>{result.assessment.reason}</p>
+                            <p className="muted">
+                              这只是AI的判断，不代表事实已核实。
+                            </p>
+                            <button
+                              className="text-button"
+                              onClick={() => setEditing({ ...a })}
+                            >
+                              纠正这条回答的情况
+                            </button>
+                          </details>
+                        ) : null;
+                      })()}
+                    {current.targetId && (
+                      <p className="muted">
+                        围绕：
+                        {rows.find((e) => e.id === current.targetId)
+                          ? entityName(
+                              rows.find((e) => e.id === current.targetId)!,
+                            )
+                          : "相关看法暂时不可用"}
+                      </p>
+                    )}
+                    <h2 id="current-followup" aria-live="polite">
+                      {current.text}
                     </h2>
+                    {!!current.strategies.length && (
+                      <p className="muted">
+                        这次从“
+                        {strategyLabels[current.strategies.at(-1)!.strategy]}
+                        ”想一想。
+                      </p>
+                    )}
                     {current.review && (
                       <p className="notice error">
                         原回答或材料已变化，这个追问需重新核对。请更新AI追问或使用基础引导。
+                        <button
+                          disabled={busy}
+                          className="text-button"
+                          onClick={() =>
+                            void run(() =>
+                              mutate({ action: "basic" }, valueRef.current),
+                            )
+                          }
+                        >
+                          使用基础引导重新核对
+                        </button>
                       </p>
                     )}
                     <label className="answer-label">
@@ -381,8 +541,8 @@ export default function GuidedThinking({
                     <div className="question-help">
                       <button
                         className="text-button"
-                        disabled={busy}
-                        onClick={() => setRephrased((v) => !v)}
+                        disabled={busy || current.strategies.length >= 9}
+                        onClick={() => void reframe()}
                       >
                         换个问法
                       </button>
@@ -402,6 +562,61 @@ export default function GuidedThinking({
                         跳过
                       </button>
                     </div>
+                    <details className="question-difficulty">
+                      <summary>这题卡在哪里？</summary>
+                      <div className="bar">
+                        <button
+                          className="text-button"
+                          disabled={busy || current.strategies.length >= 9}
+                          onClick={() => void reframe("abstract")}
+                        >
+                          太抽象了
+                        </button>
+                        <button
+                          className="text-button"
+                          disabled={busy || current.review}
+                          onClick={() => void respond("unknown", "external")}
+                        >
+                          我缺少信息
+                        </button>
+                        <button
+                          className="text-button"
+                          disabled={busy || current.strategies.length >= 9}
+                          onClick={() => void reframe("notApplicable")}
+                        >
+                          不适合我的情况
+                        </button>
+                      </div>
+                      <p className="muted">
+                        缺少信息时，将当前内容保留为待确认，再想确认方法；不适用时也可以直接跳过。
+                      </p>
+                    </details>
+                    <details className="answer-assessment">
+                      <summary>这条回答怎样看（可选）</summary>
+                      <select
+                        aria-label="回答的情况"
+                        value={assessment}
+                        onChange={(e) =>
+                          setAssessment(e.target.value as Assessment)
+                        }
+                      >
+                        {Object.entries(assessmentLabels).map(
+                          ([value, label]) => (
+                            <option key={value} value={value}>
+                              {label}
+                            </option>
+                          ),
+                        )}
+                      </select>
+                      <p className="muted">
+                        基础引导只根据你的明确选择调整路径，不自动理解自由文本。以后可以改。
+                      </p>
+                    </details>
+                    {current.strategies.length >= 3 && (
+                      <p className="muted">
+                        如果这些角度仍没帮助，可以留下未知、跳过或先到这里。
+                      </p>
+                    )}
                     {hint && (
                       <p className="question-hint">
                         {current.mode === "ai"
@@ -440,6 +655,96 @@ export default function GuidedThinking({
                     ，也可以继续。
                   </p>
                 )}
+                <details className="scenario-picker">
+                  <summary>换一个适合这件事的引导</summary>
+                  {session.data.scenarioSuggestion && (
+                    <p className="muted">
+                      AI建议“{scenarios[session.data.scenarioSuggestion]}
+                      ”，是否采用由你决定。可以选择通用梳理拒绝建议。
+                    </p>
+                  )}
+                  <div className="bar">
+                    {Object.entries(scenarios).map(([value, label]) => (
+                      <button
+                        key={value}
+                        aria-pressed={session.data.scenario === value}
+                        disabled={busy}
+                        onClick={() =>
+                          void run(() =>
+                            mutate({
+                              action: "scenario",
+                              scenario: value,
+                              draft: valueRef.current,
+                            }),
+                          )
+                        }
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="muted">
+                    当前为{scenarios[session.data.scenario]}
+                    。切换时保留未提交的回答，不要求重新开始。
+                  </p>
+                </details>
+                {!!session.data.parked.length && (
+                  <details className="parked-answers">
+                    <summary>暂存的回答</summary>
+                    {session.data.parked.map((p) => (
+                      <article key={p.question.id}>
+                        <p>{p.question.text}</p>
+                        <p className="full-body">{p.draft}</p>
+                        <button
+                          disabled={busy}
+                          onClick={() =>
+                            void run(() =>
+                              mutate({
+                                action: "resume",
+                                questionId: p.question.id,
+                                draft: valueRef.current,
+                              }),
+                            )
+                          }
+                        >
+                          继续这条回答
+                        </button>
+                      </article>
+                    ))}
+                  </details>
+                )}
+                {session.data.answers
+                  .filter(
+                    (a) =>
+                      a.assessment === "external" && a.status !== "skipped",
+                  )
+                  .slice(-3)
+                  .map((a) => (
+                    <div className="external-gap" key={a.id}>
+                      <p className="full-body">
+                        待确认：{a.text || a.question.text}
+                      </p>
+                      <button
+                        disabled={busy}
+                        className="text-button"
+                        onClick={() =>
+                          void run(() =>
+                            mutate({
+                              action: "focus",
+                              answerId: a.id,
+                              purpose: "verify",
+                              draft: valueRef.current,
+                            }),
+                          )
+                        }
+                      >
+                        记录确认方法
+                      </button>
+                      <small className="muted">
+                        还缺外部信息，没有自动补出答案。
+                      </small>
+                    </div>
+                  ))}
                 <details className="followup-options">
                   <summary>
                     选择想继续想的方向
@@ -455,7 +760,11 @@ export default function GuidedThinking({
                         disabled={busy || !!answer.trim()}
                         onClick={() =>
                           void run(() =>
-                            mutate({ action: "direction", direction: d }),
+                            mutate({
+                              action: "direction",
+                              direction: d,
+                              draft: valueRef.current,
+                            }),
                           )
                         }
                       >
@@ -561,6 +870,49 @@ export default function GuidedThinking({
                           : a.text}
                     </p>
                   ))}
+                  {!!session.requests?.length && (
+                    <details>
+                      <summary>实际AI请求记录（含失败）</summary>
+                      {session.requests.map((r) => (
+                        <details key={r.id}>
+                          <summary>
+                            {readableTime(r.created_at, user.settings.timezone)}{" "}
+                            ·{" "}
+                            {r.state === "success"
+                              ? "已返回"
+                              : r.state === "running"
+                                ? "请求中"
+                                : "未成功"}
+                            {r.stale ? " · 已过期" : ""}
+                          </summary>
+                          {(() => {
+                            const snap = JSON.parse(r.snapshot) as {
+                              entities: Entity[];
+                              answers: GuideAnswer[];
+                            };
+                            return (
+                              <>
+                                {snap.entities.map((e) => (
+                                  <p className="full-body" key={e.id}>
+                                    {entityName(e)} · 内容版本{" "}
+                                    {e.contentVersion}
+                                  </p>
+                                ))}
+                                {snap.answers.map((a) => (
+                                  <p className="full-body" key={a.id}>
+                                    {a.question.text}
+                                    <br />
+                                    {a.text || a.status}
+                                  </p>
+                                ))}
+                              </>
+                            );
+                          })()}
+                          {r.state === "error" && <p>{r.result}</p>}
+                        </details>
+                      ))}
+                    </details>
+                  )}
                   {session.data.runs.map((r) => (
                     <details key={r.id}>
                       <summary>
@@ -634,6 +986,30 @@ export default function GuidedThinking({
               ]}
             />
           </div>
+          {session && (
+            <ThinkingUpdates
+              root={root}
+              rows={rows}
+              items={items}
+              session={session}
+              userId={user.id}
+              zone={user.settings.timezone}
+              busy={busy}
+              onSave={updateContent}
+              onFocus={(entityId, purpose = "condition") =>
+                void run(() =>
+                  mutate({
+                    action: "focus",
+                    entityId,
+                    purpose,
+                    draft: valueRef.current,
+                  }),
+                )
+              }
+              onHistory={onHistory}
+              onOpen={onOpen}
+            />
+          )}
           {!!session?.data.answers.length && (
             <details className="answer-history">
               <summary>前面的回答 · {session.data.answers.length} 条</summary>
@@ -758,71 +1134,102 @@ export default function GuidedThinking({
             ) : (
               <p className="muted">还没有保存的回答，按自己的节奏开始就好。</p>
             )}
-            {(allCandidates ? candidates : candidates.slice(0, 5)).map((c) => (
-              <section className="candidate-summary" key={c.id}>
-                <h3>{guidanceLabels[c.direction]}</h3>
-                <span className="muted">
-                  {c.source === "ai" ? "AI提炼" : "原回答整理"} ·{" "}
-                  {c.target ? "已确认" : "待确认"}
-                  {c.stale ? " · 需重新核对" : ""}
-                </span>
-                <p className="full-body">{c.text}</p>
-                <details>
-                  <summary>追溯对应回答</summary>
-                  {c.answerIds.map((id) => {
-                    const a =
-                      c.answerSnapshots.find((a) => a.id === id) ||
-                      session?.data.answers.find((a) => a.id === id);
-                    return a ? (
-                      <p className="full-body" key={id}>
-                        {a.question.text} · 回答版本 {a.version}
-                        <br />
-                        {a.text || "暂时不知道"}
-                      </p>
-                    ) : (
-                      <p key={id}>来源回答不可用</p>
-                    );
-                  })}
-                </details>
-                {!c.target && !c.stale && (
-                  <button
-                    className="text-button"
-                    onClick={() => {
-                      setPreviewFocus(
-                        document.activeElement as HTMLElement | null,
-                      );
-                      setPreview([
-                        {
-                          id: c.id,
-                          text: c.text,
-                          kind: c.kind,
-                          cardType: c.cardType,
-                          selected: true,
-                        },
-                      ]);
-                    }}
-                  >
-                    预览、补充并采纳
-                  </button>
-                )}
-                {c.target && (
-                  <button
-                    className="text-button"
-                    onClick={() => {
-                      const target = rows.find((e) => e.id === c.target);
-                      if (target) onOpen(target);
-                    }}
-                  >
-                    查看正式记录
-                  </button>
-                )}
-                {c.stale && c.target && (
-                  <p className="muted">
-                    原判断保留，没有自动改写。请核对后在正式记录中决定是否修改。
+            {(allCandidates ? candidates : candidates.slice(0, 5)).map((c) => {
+              const target = items.find((e) => e.id === c.target);
+              const meta = session?.data.judgments.find(
+                (j) => j.entityId === c.target,
+              );
+              const current = target && isJudgment(target);
+              const needsReview =
+                c.stale && (!current || !meta || meta.needsReview);
+              return (
+                <section className="candidate-summary" key={c.id}>
+                  <h3>{guidanceLabels[c.direction]}</h3>
+                  <span className="muted">
+                    {c.source === "ai" ? "AI提炼" : "原回答整理"} ·{" "}
+                    {c.target ? "已确认" : "待确认"}
+                    {needsReview
+                      ? " · 需重新核对"
+                      : c.stale
+                        ? " · 来源为之前版本"
+                        : ""}
+                  </span>
+                  <p className="full-body">
+                    {current ? judgmentText(target) : c.text}
                   </p>
-                )}
-              </section>
-            ))}
+                  <details>
+                    <summary>追溯对应回答</summary>
+                    {c.answerIds.map((id) => {
+                      const a =
+                        c.answerSnapshots.find((a) => a.id === id) ||
+                        session?.data.answers.find((a) => a.id === id);
+                      return a ? (
+                        <p className="full-body" key={id}>
+                          {a.question.text} · 回答版本 {a.version}
+                          <br />
+                          {a.text || "暂时不知道"}
+                        </p>
+                      ) : (
+                        <p key={id}>来源回答不可用</p>
+                      );
+                    })}
+                  </details>
+                  {!c.target && !c.stale && (
+                    <button
+                      className="text-button"
+                      onClick={() => {
+                        setPreviewFocus(
+                          document.activeElement as HTMLElement | null,
+                        );
+                        setPreview([
+                          {
+                            id: c.id,
+                            text: c.text,
+                            kind: c.kind,
+                            cardType: c.cardType,
+                            selected: true,
+                          },
+                        ]);
+                      }}
+                    >
+                      预览、补充并采纳
+                    </button>
+                  )}
+                  {!c.target && c.status === "pending" && (
+                    <button
+                      className="text-button"
+                      disabled={busy}
+                      onClick={() =>
+                        void run(() =>
+                          mutate(
+                            { action: "ignoreCandidate", id: c.id },
+                            valueRef.current,
+                          ),
+                        )
+                      }
+                    >
+                      放弃这条候选
+                    </button>
+                  )}
+                  {c.target && (
+                    <button
+                      className="text-button"
+                      onClick={() => {
+                        const target = items.find((e) => e.id === c.target);
+                        if (target) onOpen(target);
+                      }}
+                    >
+                      查看正式记录
+                    </button>
+                  )}
+                  {needsReview && c.target && (
+                    <p className="muted">
+                      原判断保留，没有自动改写。请核对后在正式记录中决定是否修改。
+                    </p>
+                  )}
+                </section>
+              );
+            })}
             {candidates.length > 5 && (
               <button
                 className="text-button"
@@ -1071,6 +1478,25 @@ export default function GuidedThinking({
               <option value="skipped">跳过</option>
             </select>
           </label>
+          <label>
+            这条回答怎样看
+            <select
+              aria-label="修改回答的情况"
+              value={editing.assessment}
+              onChange={(e) =>
+                setEditing({
+                  ...editing,
+                  assessment: e.target.value as Assessment,
+                })
+              }
+            >
+              {Object.entries(assessmentLabels).map(([v, l]) => (
+                <option key={v} value={v}>
+                  {l}
+                </option>
+              ))}
+            </select>
+          </label>
           <button
             className="primary"
             disabled={busy}
@@ -1082,6 +1508,7 @@ export default function GuidedThinking({
                     answerId: editing.id,
                     text: editing.text,
                     status: editing.status,
+                    assessment: editing.assessment,
                   },
                   valueRef.current,
                 );

@@ -45,6 +45,7 @@ import {
   DatabaseUnavailableError,
   databaseDiagnostic,
 } from "@/lib/db";
+import { updateThinking } from "@/lib/thinking-updates";
 import { Kind, fail, AppError, kinds } from "@/lib/schema";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -181,6 +182,7 @@ async function handle(
             : getGuide(user.id, id),
         );
       if (id && req.method === "POST") {
+        if (action === "updates") return reply(updateThinking(user.id, id, b));
         if (action === "ai") return reply(await generateGuide(user.id, id, b));
         return reply(initializeGuide(user.id, id));
       }

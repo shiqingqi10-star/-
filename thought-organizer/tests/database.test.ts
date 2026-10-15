@@ -71,7 +71,7 @@ test("先安装等待时间：另一进程的短暂写锁释放后可切换WAL�
     m.one<{ version: number }>(
       "SELECT max(version) version FROM schema_migrations",
     )!.version,
-    2,
+    3,
   );
   await lock.exited;
 });
@@ -130,7 +130,7 @@ test("已有WAL数据库读写连接无需重新迁移；事务失败回滚且�
   assert.equal(m.one<{ value: number }>("SELECT value FROM probe")!.value, 2);
 });
 
-test("v1增量迁移到v2保留用户、原文、历史与关联，并可重复启动", async (t) => {
+test("v1增量迁移到v3保留用户、原文、历史与关联，并可重复启动", async (t) => {
   const m = await fixture(t),
     old = new DatabaseSync(m.databasePath);
   old.exec(readFileSync("lib/migration.sql", "utf8"));
@@ -220,7 +220,7 @@ test("v1增量迁移到v2保留用户、原文、历史与关联，并可重复�
     m.one<{ version: number }>(
       "SELECT max(version) version FROM schema_migrations",
     )!.version,
-    2,
+    3,
   );
   assert.equal(
     m.one<{ snapshot: string }>("SELECT snapshot FROM history")!.snapshot,
@@ -240,4 +240,34 @@ test("v1增量迁移到v2保留用户、原文、历史与关联，并可重复�
       .integrity_check,
     "ok",
   );
+});
+
+test("热更新复用的v2旧连接会安全关闭并增量升级，不在新接口中报缺表", async (t) => {
+  const m = await fixture(t),
+    legacy = new DatabaseSync(m.databasePath);
+  legacy.exec(readFileSync("lib/migration.sql", "utf8"));
+  legacy.exec(readFileSync("lib/migration-2.sql", "utf8"));
+  const globalState = globalThis as typeof globalThis & {
+    __thoughtDatabaseConnectionsV2: Map<
+      string,
+      { database: DatabaseSync; depth: number; schemaVersion?: number }
+    >;
+  };
+  globalState.__thoughtDatabaseConnectionsV2.set(m.databasePath, {
+    database: legacy,
+    depth: 0,
+  });
+  const upgraded = m.getDatabase();
+  assert.equal(legacy.isOpen, false);
+  assert.equal(
+    upgraded.prepare("SELECT max(version) version FROM schema_migrations").get()
+      ?.version,
+    3,
+  );
+  assert.equal(
+    upgraded.prepare("SELECT count(*) count FROM guidance_requests").get()
+      ?.count,
+    0,
+  );
+  assert.equal(m.getDatabase(), upgraded);
 });

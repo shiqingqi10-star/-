@@ -1884,3 +1884,99 @@ pre {
   font-weight: 400;
   overflow-wrap: anywhere;
 }
+
+/* Purposeful follow-ups and a quiet, optional update loop. */
+.question-difficulty,
+.answer-assessment,
+.scenario-picker,
+.parked-answers {
+  margin-top: 16px;
+  font-size: 14px;
+}
+.question-context {
+  margin: 16px 0;
+  font-size: 14px;
+  color: var(--secondary);
+}
+.question-context p {
+  color: var(--text);
+}
+.scenario-picker .bar,
+.question-difficulty .bar {
+  margin-top: 12px;
+}
+.external-gap {
+  margin-top: 20px;
+  padding: 12px 16px;
+  background: var(--warning-bg);
+  border-radius: var(--radius-sm);
+}
+.external-gap p {
+  margin: 0;
+}
+.external-gap small {
+  display: block;
+}
+.thinking-updates {
+  margin-top: 24px;
+}
+.thinking-update-entries {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.thinking-update-entries button {
+  font-size: 14px;
+  background: transparent;
+}
+.living-judgments,
+.thinking-update-history {
+  margin-top: 20px;
+}
+.living-judgment {
+  padding: 20px 0;
+  border-bottom: 1px solid var(--border);
+}
+.living-judgment > details {
+  margin: 12px 0;
+}
+.living-judgment .bar {
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.living-judgment small {
+  display: block;
+}
+.judgment-impact {
+  padding: 12px;
+  background: var(--warning-bg);
+  border-radius: var(--radius-sm);
+  margin: 12px 0;
+}
+.judgment-impact .bar {
+  margin-top: 8px;
+}
+.thinking-update-history article {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+.scope-fields dt {
+  color: var(--secondary);
+  font-size: 13px;
+}
+.scope-fields dd {
+  margin: 4px 0 12px;
+}
+@media (max-width: 600px) {
+  .thinking-update-entries {
+    gap: 6px;
+  }
+  .thinking-update-entries button {
+    flex: 1 1 130px;
+  }
+  .living-judgment .bar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

@@ -1,5 +1,5 @@
 import { Entity, referenceFields } from "./schema";
-export const UI_VERSION = "追问梳理 · 2026.10.14-r3";
+export const UI_VERSION = "思考更新 · 2026.10.15-r4";
 export function thinkingScope(items: Entity[], root: Entity): Entity[] {
   const pool = items.filter((e) => !e.deletedAt && e.owner === root.owner);
   if (root.kind === "topic")
@@ -63,3 +63,13 @@ export const cardMeaning: Record<string, string> = {
   结论: "当前结论",
   备选方案: "可以考虑的选择",
 };
+
+export const judgmentText = (e: Entity) =>
+  String(
+    e.kind === "review"
+      ? e.data.judgment || e.data.selected || e.data.title
+      : e.data.content || e.data.title || "",
+  );
+export const isJudgment = (e: Entity) =>
+  e.kind === "review" ||
+  (e.kind === "card" && !["事实或观察", "问题"].includes(String(e.data.type)));

@@ -51,7 +51,7 @@ import AIAssistant, { Analysis, Suggestion } from "./AIAssistant";
 import Modal from "./ui/Modal";
 import Menu, { MenuAction } from "./ui/Menu";
 import Settings, { User } from "./Settings";
-import { api, ApiError } from "@/lib/http";
+import { api, ApiError, requestToken } from "@/lib/http";
 const nav = [
   { name: "我的思考", icon: ReaderIcon },
   { name: "待想清楚", icon: QuestionMarkCircledIcon },
@@ -573,7 +573,7 @@ export default function Workspace() {
       quickToken.current =
         stored?.content === content && stored.token
           ? stored
-          : { content, token: crypto.randomUUID() };
+          : { content, token: requestToken() };
       try {
         localStorage.setItem(
           "thought-draft:" + user.id + ":quick-token",
@@ -1289,6 +1289,7 @@ export default function Workspace() {
               key={t.id}
               root={t}
               rows={thinkingScope(alive, t)}
+              items={items}
               user={user}
               onRefresh={refresh}
               onEdit={openEdit}

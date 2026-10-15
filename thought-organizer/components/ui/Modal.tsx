@@ -45,7 +45,7 @@ export default function Modal({
     <dialog
       ref={dialog}
       className={drawer ? "modal drawer" : "modal"}
-      aria-labelledby={id}
+      aria-label={title}
       onCancel={(e) => {
         e.preventDefault();
         close.current();

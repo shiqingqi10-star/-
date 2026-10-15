@@ -505,6 +505,20 @@ export function exportData(owner: string) {
       "SELECT id,root,version,data,updated_at FROM guidance_sessions WHERE owner=?",
       owner,
     ),
+    guidanceRequests: all<{
+      id: string;
+      session_id: string;
+      snapshot: string;
+      result: string;
+      state: string;
+      base_version: number;
+      stale: number;
+      created_at: string;
+      ended_at: string | null;
+    }>(
+      "SELECT id,session_id,snapshot,result,state,base_version,stale,created_at,ended_at FROM guidance_requests WHERE owner=?",
+      owner,
+    ),
     guidanceHistory: all<{
       session_id: string;
       version: number;
@@ -716,6 +730,33 @@ export function importData(owner: string, body: unknown) {
         r.snapshot = JSON.stringify(rewrite(JSON.parse(r.snapshot)));
         r.stale = true;
       }
+      const rewriteQuestion = (q: typeof d.current) => {
+        if (q?.targetId) q.targetId = remap(q.targetId);
+      };
+      rewriteQuestion(d.current);
+      d.answers.forEach((a) => rewriteQuestion(a.question));
+      d.parked.forEach((p) => rewriteQuestion(p.question));
+      d.candidates.forEach((c) =>
+        c.answerSnapshots.forEach((a) => rewriteQuestion(a.question)),
+      );
+      d.agenda.forEach((n) => {
+        if (n.targetId) n.targetId = remap(n.targetId);
+      });
+      d.judgments.forEach((j) => {
+        j.entityId = remap(j.entityId);
+        j.evidenceRefs = j.evidenceRefs.map(remap);
+      });
+      d.updates.forEach((u) => {
+        u.targets = u.targets.map(remap);
+        u.evidenceRefs = u.evidenceRefs.map(remap);
+        if (u.taskId) u.taskId = remap(u.taskId);
+        u.before.forEach((b) => {
+          b.entityId = remap(b.entityId);
+        });
+      });
+      d.impacts.forEach((i) => {
+        i.entityId = remap(i.entityId);
+      });
       if (d.current?.mode === "ai") d.current.review = true;
       d.rootSignature = "imported-history";
       return JSON.stringify(d);
@@ -763,6 +804,41 @@ export function importData(owner: string, body: unknown) {
         h.created_at,
       );
     }
+    const requests = z
+      .array(
+        z
+          .object({
+            id: z.string(),
+            session_id: z.string(),
+            snapshot: z.string().max(500000),
+            result: z.string().max(100000),
+            state: z.enum(["running", "success", "error"]),
+            base_version: z.number().int().positive(),
+            stale: z.number().int().min(0).max(1),
+            created_at: z.iso.datetime(),
+            ended_at: z.iso.datetime().nullable(),
+          })
+          .strict(),
+      )
+      .max(10000)
+      .parse(b.guidanceRequests || []);
+    for (const r of requests) {
+      const session = guideIds.get(r.session_id);
+      if (!session) fail("AI请求所属梳理记录无效");
+      run(
+        "INSERT INTO guidance_requests VALUES(?,?,?,?,?,?,?,?,?,?)",
+        randomUUID(),
+        owner,
+        session,
+        JSON.stringify(rewrite(JSON.parse(r.snapshot))),
+        r.result,
+        r.state === "running" ? "error" : r.state,
+        r.base_version,
+        1,
+        r.created_at,
+        r.ended_at,
+      );
+    }
     metric(owner, "import");
     return { imported: mapped.length, ids: Object.fromEntries(map) };
   });
@@ -777,7 +853,25 @@ export function markdown(owner: string) {
     )
       .map((row) => {
         const d = guideSchema.parse(JSON.parse(row.data));
+        const changes = d.updates
+          .map(
+            (u) =>
+              ({
+                information: "新信息",
+                judgment: "判断更新",
+                result: "行动结果",
+                check: "核对记录",
+              })[u.kind] +
+              "：" +
+              u.text +
+              (u.reason ? "\n原因：" + u.reason : "") +
+              u.before.map((b) => "\n之前：" + b.text).join(""),
+          )
+          .join("\n\n");
         return (
+          "## 新信息与判断变化\n\n" +
+          changes +
+          "\n\n" +
           "## 梳理问答\n\n" +
           d.answers
             .map(

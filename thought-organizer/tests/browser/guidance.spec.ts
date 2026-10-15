@@ -249,7 +249,7 @@ test("重复点击和失败重试不会重复创建，HTML错误保留草稿，�
   await expect(page.locator(".question-hint")).toContainText("预设思考角度");
   await page.getByRole("button", { name: "换个问法", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "想到这件事，你最担心哪一个具体情况？" }),
+    page.getByRole("heading", { name: /关于「让你犹豫的具体情况」/ }),
   ).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   expect(

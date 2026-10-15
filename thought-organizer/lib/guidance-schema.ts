@@ -51,6 +51,45 @@ export const presets: Record<
     hint: "倾向可以是不决定、等待信息，或在某个条件成立时再选择。决定由你确认。",
   },
 };
+export const strategies = [
+  "concrete",
+  "experience",
+  "compare",
+  "evidence",
+  "condition",
+  "counterexample",
+  "smaller",
+  "tradeoff",
+  "verify",
+] as const;
+export const assessments = [
+  "unspecified",
+  "clear",
+  "vague",
+  "inferred",
+  "observed",
+  "preference",
+  "decision",
+  "external",
+  "internal",
+  "misunderstood",
+  "notApplicable",
+  "unwilling",
+] as const;
+export const scenarioSchema = z.enum([
+  "general",
+  "decision",
+  "project",
+  "reflection",
+]);
+const strategyUse = z
+  .object({
+    strategy: z.enum(strategies),
+    text: z.string().max(500),
+    reason: z.enum(["direct", "abstract", "missing", "notApplicable"]),
+    mode: z.enum(["basic", "ai"]),
+  })
+  .strict();
 export const questionSchema = z
   .object({
     id: z.string(),
@@ -60,6 +99,12 @@ export const questionSchema = z
     hint: z.string().max(2000),
     rephrase: z.string().max(500),
     review: z.boolean(),
+    itemKey: z.string().max(200).default(""),
+    purpose: z.string().max(500).default(""),
+    sourceAnswerIds: z.array(z.string()).max(100).default([]),
+    targetId: z.string().nullable().default(null),
+    prerequisites: z.array(z.string()).max(30).default([]),
+    strategies: z.array(strategyUse).max(9).default([]),
   })
   .strict();
 export const answerSchema = z
@@ -68,6 +113,7 @@ export const answerSchema = z
     question: questionSchema,
     text: z.string().max(50000),
     status: z.enum(["answered", "unknown", "skipped"]),
+    assessment: z.enum(assessments).default("unspecified"),
     version: z.number().int().positive(),
     review: z.boolean(),
     createdAt: z.string(),
@@ -98,6 +144,55 @@ export const candidateSchema = z
     runId: z.string().nullable(),
   })
   .strict();
+export const judgmentMetaSchema = z
+  .object({
+    entityId: z.string(),
+    why: z.string().max(50000).default(""),
+    uncertain: z.string().max(50000).default(""),
+    conditions: z.string().max(50000).default(""),
+    method: z.string().max(50000).default(""),
+    answerIds: z.array(z.string()).max(100).default([]),
+    evidenceRefs: z.array(z.string()).max(100).default([]),
+    needsReview: z.boolean().default(false),
+  })
+  .strict();
+export const updateSchema = z
+  .object({
+    id: z.string(),
+    token: z.string().uuid(),
+    fingerprint: z.string(),
+    kind: z.enum(["information", "judgment", "result", "check"]),
+    text: z.string().max(50000),
+    reason: z.string().max(50000),
+    targets: z.array(z.string()).max(30),
+    evidenceRefs: z.array(z.string()).max(30),
+    taskId: z.string().nullable(),
+    createdAt: z.string(),
+    before: z
+      .array(
+        z
+          .object({
+            entityId: z.string(),
+            text: z.string(),
+            version: z.number().int().positive(),
+          })
+          .strict(),
+      )
+      .max(30),
+  })
+  .strict();
+export const impactSchema = z
+  .object({
+    id: z.string(),
+    updateId: z.string(),
+    entityId: z.string(),
+    reason: z.string().max(50000),
+    status: z.enum(["pending", "still", "adjust", "uncertain"]),
+    comment: z.string().max(50000),
+    resolved: z.boolean().default(false),
+    stance: z.enum(["supports", "opposes", "related"]),
+  })
+  .strict();
 export const guideSchema = z
   .object({
     current: questionSchema.nullable(),
@@ -120,6 +215,45 @@ export const guideSchema = z
       )
       .max(100),
     rootSignature: z.string(),
+    scenario: scenarioSchema.default("general"),
+    parked: z
+      .array(
+        z
+          .object({
+            question: questionSchema,
+            draft: z.string().max(50000),
+            pausedAt: z.string(),
+          })
+          .strict(),
+      )
+      .max(50)
+      .default([]),
+    scenarioSuggestion: scenarioSchema.nullable().default(null),
+    agenda: z
+      .array(
+        z
+          .object({
+            key: z.string(),
+            purpose: z.string(),
+            status: z.enum([
+              "pending",
+              "clear",
+              "unclear",
+              "external",
+              "skipped",
+              "notApplicable",
+            ]),
+            answerId: z.string(),
+            requires: z.array(z.string()),
+            targetId: z.string().nullable(),
+          })
+          .strict(),
+      )
+      .max(500)
+      .default([]),
+    judgments: z.array(judgmentMetaSchema).max(200).default([]),
+    updates: z.array(updateSchema).max(500).default([]),
+    impacts: z.array(impactSchema).max(1000).default([]),
   })
   .strict();
 export type GuideData = z.infer<typeof guideSchema>;
@@ -131,4 +265,12 @@ export type GuideSession = {
   version: number;
   data: GuideData;
   updatedAt: string;
+  requests?: {
+    id: string;
+    snapshot: string;
+    result: string;
+    state: string;
+    stale: number;
+    created_at: string;
+  }[];
 };

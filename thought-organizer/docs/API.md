@@ -85,3 +85,30 @@ AI建议采纳幂等：若已有target，重复调用直接返回该项目；旧
 - `GET /api/guidance/:root/history`：会话旧版本，包括原回答和候选。编辑回答不改写已确认实体。
 
 JSON备份仍支持schemaVersion=1。新导出额外包含guidance/guidanceHistory；旧备份没有这两项时按空处理。导入在同一事务中映射实体归属/目标，保留来源回答快照，并使历史AI分析过期。Markdown导出也包含问答记录。
+
+
+## r4 目的追问与持续更新
+
+`PATCH /guidance/:root` 在原命令基础上支持：
+
+- `reframe`：`version, reason`（direct/abstract/missing/notApplicable），同轮九种策略不重复。保留问题身份、目的和引用，不创建回答。
+- `scenario`：`version, scenario`（general/decision/project/reflection），可带draft；旧问题与草稿暂存。再次进入优先未处理前置事项。
+- `focus`：`version, targetId` 或 `answerId`，围绕相关判断或信息缺口继续；可带draft。
+- `resume`：`version, id`，恢复暂存问题；可带draft。
+- `answer` / `edit`：可带 `assessment`。默认unspecified，不靠文本关键词猜测；明确选择clear/vague/inferred/observed/preference/decision/external/internal/misunderstood/notApplicable/unwilling影响基础分支。
+- `ignoreCandidate`：`version, id`，放弃候选后不会在同源prepare时重新生成。
+
+`POST /guidance/:root/updates`：所有动作必须包含`version`与UUID `token`。相同token相同内容幂等返回原结果；不同内容409。事务中同时检查会话和实体版本。
+
+| action | 主要参数 | 结果 |
+| --- | --- | --- |
+| information | text或evidenceId、evidenceType、targets、stance(supports/opposes/related) | 新增/复用当前账号材料，显式关联判断，原文不变、原依据保留，建立待核对影响 |
+| judgment | text、可选entityId/entityVersion、why/uncertain/conditions/method/evidenceRefs | 用户确认的新看法；少量更新保留省略字段；旧内容在实体历史及会话版本中保留 |
+| result | taskId/taskVersion、targets、可选happened/information/influence/criterion | 完成行动并记录实际结果，产生未核实材料及待核对提示；不创建验证成功结论 |
+| check | impactId、status(still/adjust/uncertain)、comment | 保存用户核对；仍适用不会改写判断；调整/不确定保留待处理状态 |
+
+返回`{session,update}`。会话data增加agenda、parked、judgments、updates、impacts，旧JSON缺少字段时使用兼容默认值。`GET /guidance/:root` 增加requests：审计实际输入快照、版本、结果或可读错误，不含API密钥。服务端使用guidance_requests增量表，schema_migrations=3。
+
+`POST /guidance/:root/ai` 可带`intent:next|reframe`与reason，沿用原供应商/模型/额度。实际请求先持久审计；输出校验相关回答、明确前置条件、同目的改写、范围内目标与非事实来源。返回期间版本变动只保留过期分析，不覆盖当前状态。成功与失败均保留输入快照；不会用基础模板冒充AI结果。
+
+账号JSON导出的schemaVersion仍为1，新增可选guidanceRequests，并完整导出会话与历史。导入重映射显式实体引用、判断、更新、影响和输入快照，导入AI请求作为过期历史。Markdown包含新信息、行动结果和看法前后文字。

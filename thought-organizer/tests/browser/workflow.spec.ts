@@ -874,7 +874,7 @@ test("无AI完整手动场景：独立原文、观点、疑问、关联行动、
   });
   await mobileNav(page, "设置");
   await expect(
-    page.getByText("界面版本：追问梳理 · 2026.10.14-r3", { exact: true }),
+    page.getByText("界面版本：思考更新 · 2026.10.15-r4", { exact: true }),
   ).toBeVisible();
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.screenshot({
@@ -1083,7 +1083,7 @@ test("登录和注册收到HTML或空响应时显示可读错误，版本在登�
 }) => {
   await page.goto("/");
   await expect(
-    page.getByText("界面版本：追问梳理 · 2026.10.14-r3", { exact: false }),
+    page.getByText("界面版本：思考更新 · 2026.10.15-r4", { exact: false }),
   ).toBeVisible();
   await page
     .getByLabel("邮箱", { exact: true })
