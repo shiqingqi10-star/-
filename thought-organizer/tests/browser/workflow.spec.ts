@@ -489,6 +489,15 @@ test("选择模式、准确AI范围、空密钥、菜单和抽屉焦点返回", 
     data: { topic: t.id, ids: [card.id], mode: "整理思路" },
   });
   expect(aiResponse.status()).toBe(503);
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "配置说明", exact: true }).click();
+  const help = page.getByRole("dialog", { name: "AI配置说明", exact: true });
+  await expect(help).toContainText("管理员");
+  await expect(help).not.toContainText(/DEEPSEEK|\.env|环境变量|\/workspace/);
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("button", { name: "配置说明", exact: true }),
+  ).toBeFocused();
 });
 
 test("搜索定位、历史恢复、回收站、个人导入导出和用户隔离", async ({

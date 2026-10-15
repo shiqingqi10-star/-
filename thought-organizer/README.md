@@ -4,6 +4,8 @@
 
 [下载r4完整工程包](releases/thought-organizer-thinking-updates-2026-10-15-r4.zip)（GitHub文件页选择Download raw file），[本轮验收、截图、限制和Windows更新说明](docs/THINKING-UPDATES-2026-10-15-r4.md)。请使用 **work分支**；main与旧r3包不包含本轮更新。停止旧服务，备份并保留自己的.env和完整data，再安装依赖、构建和启动。
 
+2026-10-15 后端配置隐私补丁：[不含密钥的更新工程包](releases/thought-organizer-backend-config-2026-10-15-r4.zip)，[配置与验证说明](docs/BACKEND-CONFIG-2026-10-15.md)。普通页面不显示环境变量名、文件路径或密钥字段。密钥由各部署管理员在后端单独配置，不随ZIP或Git分发；下载源码不会自动获得云端配置。
+
 这是独立的中文私人思考工具。前端与完整业务后端使用 Next.js App Router、React、TypeScript、Tailwind CSS 和 Zod；正式数据使用 Node.js 原生 SQLite 驱动保存到真实文件数据库。`localStorage`只保留编辑失败草稿，不作为正式数据源。没有 AI 密钥也能注册、登录、整理卡片、编辑多前提关系、管理问题/任务/事件、记录证据、验证、复盘、搜索、回收站和导入导出。
 
 ## 环境与启动

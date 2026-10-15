@@ -1551,8 +1551,7 @@ export default function GuidedThinking({
       {aiHelp && (
         <Modal title="AI配置说明" onClose={() => setAiHelp(false)}>
           <p>
-            在服务端 .env 中设置 DEEPSEEK_API_KEY
-            后重启应用。沿用已有供应商与模型；密钥不会发送到浏览器。留空时可以使用全部手动整理和基础引导。
+            AI由服务管理员统一配置，账号无需填写密钥。未开通时可以继续使用基础引导和全部手动整理功能；需要开通请联系管理员。
           </p>
         </Modal>
       )}

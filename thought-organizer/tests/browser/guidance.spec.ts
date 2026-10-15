@@ -49,6 +49,11 @@ test("两页真实核心场景、候选预览确认、暂停恢复和改答核�
   await expect(
     page.getByRole("button", { name: "开启AI追问", exact: true }),
   ).toBeDisabled();
+  await page.getByRole("button", { name: "配置说明", exact: true }).click();
+  const help = page.getByRole("dialog", { name: "AI配置说明", exact: true });
+  await expect(help).toContainText("管理员");
+  await expect(help).not.toContainText(/DEEPSEEK|\.env|环境变量|\/workspace/);
+  await page.keyboard.press("Escape");
   await page.screenshot({
     path: "data/guidance-r3-question-desktop.png",
     fullPage: true,

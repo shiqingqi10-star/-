@@ -1701,12 +1701,7 @@ export default function Workspace() {
       {guide && (
         <Modal title="AI配置说明" onClose={() => setGuide(false)}>
           <p>
-            在运行此工具的服务器环境中配置 DeepSeek 密钥，然后重新启动应用。
-          </p>
-          <p>
-            使用环境变量 <code>DEEPSEEK_API_KEY</code>，服务地址和模型分别由{" "}
-            <code>DEEPSEEK_BASE_URL</code>、<code>DEEPSEEK_MODEL</code>{" "}
-            配置。此页面不收集密钥。
+            AI由服务管理员统一配置，账号无需填写密钥。需要开通或遇到服务问题，请联系管理员。
           </p>
           <p className="muted">
             未配置时，记录、卡片、关系、问题、任务、证据与复盘都可以正常使用。
