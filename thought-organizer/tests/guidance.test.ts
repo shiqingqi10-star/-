@@ -383,15 +383,16 @@ test("AI并发期间修改内容不覆盖新状态；多个追问、无效来源
           },
         ],
       });
-    await assert.rejects(
-      g.generateGuide(
-        isolated,
-        another.id,
-        { version: g.getGuide(isolated, another.id).version },
-        badSource,
-      ),
-      /来源不正确/,
+    const rejected = await g.generateGuide(
+      isolated,
+      another.id,
+      { version: g.getGuide(isolated, another.id).version },
+      badSource,
     );
+    assert.equal(rejected.session.data.candidates.length, 0);
+    const audit = JSON.parse(rejected.session.data.runs.at(-1)!.result);
+    assert.equal(audit.candidateWarnings.length, 1);
+    assert.equal(audit.candidates[0].answerIds[0], "not-an-input-answer");
     assert.equal(service.list(isolated).length, 1);
     const timeout: typeof fetch = async () => {
       throw new DOMException("test-only", "TimeoutError");
@@ -406,6 +407,300 @@ test("AI并发期间修改内容不覆盖新状态；多个追问、无效来源
       /超时/,
     );
     assert.equal(g.getGuide(id, root.id).data.answers.length, 1);
+  } finally {
+    process.env.DEEPSEEK_API_KEY = "";
+  }
+});
+
+test("未知可形成待确认问题和候选行动，错误来源单独拦截且有效追问继续", async () => {
+  const isolated = owner(),
+    root = g.startGuide(isolated, {
+      content,
+      token: randomUUID(),
+      organize: true,
+    });
+  const add = (
+    text: string,
+    status: "answered" | "unknown" | "skipped",
+    assessment = "unspecified",
+  ) => {
+    const s = g.getGuide(isolated, root.id);
+    return g.mutateGuide(isolated, root.id, {
+      action: "answer",
+      version: s.version,
+      questionId: s.data.current!.id,
+      text,
+      status,
+      assessment,
+    });
+  };
+  add("希望有时间认识新朋友", "answered");
+  add("不知道活动参加人群", "unknown");
+  add("不清楚活动时长", "answered", "external");
+  const s = add("", "skipped");
+  const [answered, unknown, external, skipped] = s.data.answers;
+  const candidates = [
+    {
+      direction: "goal",
+      text: "希望认识新朋友",
+      kind: "card",
+      cardType: "观点或推断",
+      answerIds: [answered.id],
+    },
+    {
+      direction: "unknown",
+      text: "活动参加人群是什么？",
+      kind: "question",
+      cardType: "问题",
+      answerIds: [unknown.id],
+    },
+    {
+      direction: "next",
+      text: "向组织者了解活动参加人群",
+      kind: "task",
+      cardType: "观点或推断",
+      answerIds: [unknown.id],
+    },
+    {
+      direction: "judgment",
+      text: "活动一定适合我",
+      kind: "review",
+      cardType: "结论",
+      answerIds: [unknown.id],
+    },
+    {
+      direction: "basis",
+      text: "未知被误写成事实",
+      kind: "card",
+      cardType: "事实或观察",
+      answerIds: [unknown.id],
+    },
+    {
+      direction: "goal",
+      text: "原文编号不能冒充回答",
+      kind: "card",
+      cardType: "观点或推断",
+      answerIds: [root.id],
+    },
+    {
+      direction: "goal",
+      text: "问题编号不能冒充回答",
+      kind: "card",
+      cardType: "观点或推断",
+      answerIds: [answered.question.id],
+    },
+    {
+      direction: "goal",
+      text: "跳过不是用户判断",
+      kind: "card",
+      cardType: "观点或推断",
+      answerIds: [skipped.id],
+    },
+    {
+      direction: "goal",
+      text: "不存在的回答",
+      kind: "card",
+      cardType: "观点或推断",
+      answerIds: [randomUUID()],
+    },
+  ];
+  candidates.push({
+    direction: "goal",
+    text: "没有任何来源的建议",
+    kind: "card",
+    cardType: "观点或推断",
+    answerIds: [],
+  });
+  candidates.push({
+    direction: "basis",
+    text: "缺少外部信息不能转为事实",
+    kind: "card",
+    cardType: "事实或观察",
+    answerIds: [external.id],
+  });
+  process.env.DEEPSEEK_API_KEY = "test-only-source-check";
+  try {
+    const fetcher: typeof fetch = async (_url, opts) => {
+      const input = JSON.parse(
+        JSON.parse(String(opts?.body)).messages[1].content,
+      );
+      assert.equal(input.candidateSources.length, 3);
+      assert(
+        input.candidateSources
+          .find((a: { id: string }) => a.id === unknown.id)
+          .permittedUses.includes("question"),
+      );
+      assert(
+        !input.candidateSources.some(
+          (a: { id: string }) => a.id === skipped.id,
+        ),
+      );
+      return Response.json({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                question: {
+                  text: "你愿意通过什么方式了解参加活动的人群？",
+                  direction: "next",
+                  hint: "",
+                  rephrase: "",
+                  sourceAnswerIds: [unknown.id, skipped.id],
+                },
+                candidates,
+              }),
+            },
+          },
+        ],
+        usage: { total_tokens: 10 },
+      });
+    };
+    const result = await g.generateGuide(
+      isolated,
+      root.id,
+      { version: s.version },
+      fetcher,
+    );
+    assert.equal(result.stale, false);
+    assert.equal(result.session.data.current?.mode, "ai");
+    assert.equal(result.session.data.candidates.length, 3);
+    assert.equal(service.list(isolated).length, 1);
+    const audit = JSON.parse(result.session.data.runs.at(-1)!.result);
+    assert.equal(audit.candidateWarnings.length, 8);
+    assert.equal(audit.candidates.length, 11);
+    closeDatabase();
+    assert.equal(
+      JSON.parse(g.getGuide(isolated, root.id).data.runs.at(-1)!.result)
+        .candidateWarnings.length,
+      8,
+    );
+    assert.equal(result.session.data.answers[1].status, "unknown");
+    assert(result.session.requests!.some((r) => r.state === "success"));
+    assert.throws(
+      () =>
+        g.mutateGuide(isolated, root.id, {
+          action: "confirm",
+          version: result.session.version,
+          candidates: [
+            {
+              id: "rejected",
+              text: "不得采纳",
+              kind: "card",
+              cardType: "结论",
+            },
+          ],
+        }),
+      /候选成果不存在/,
+    );
+    const confirmed = g.mutateGuide(isolated, root.id, {
+      action: "confirm",
+      version: result.session.version,
+      candidates: result.session.data.candidates.map((c) => ({
+        id: c.id,
+        text: c.text,
+        kind: c.kind,
+        cardType: c.cardType,
+      })),
+    });
+    assert.equal(confirmed.data.candidates.filter((c) => c.target).length, 3);
+    assert(
+      !service
+        .list(isolated)
+        .some((e) => e.data.content === "未知被误写成事实"),
+    );
+    const question = service.list(isolated).find((e) => e.kind === "question")!;
+    assert.equal(question.data.status, "待整理");
+    assert(
+      (
+        service.list(isolated).find((e) => e.kind === "task")!.data
+          .questionRefs as string[]
+      ).includes(question.id),
+    );
+    assert.equal(
+      g.getGuide(isolated, root.id).data.answers[1].status,
+      "unknown",
+    );
+  } finally {
+    process.env.DEEPSEEK_API_KEY = "";
+  }
+});
+
+test("改答后需复核的来源仍不能进入可采纳候选", async () => {
+  const isolated = owner(),
+    root = g.startGuide(isolated, {
+      content,
+      token: randomUUID(),
+      organize: true,
+    });
+  let s = g.getGuide(isolated, root.id);
+  s = g.mutateGuide(isolated, root.id, {
+    action: "answer",
+    version: s.version,
+    questionId: s.data.current!.id,
+    text: "原来的目标",
+    status: "answered",
+  });
+  s = g.mutateGuide(isolated, root.id, {
+    action: "answer",
+    version: s.version,
+    questionId: s.data.current!.id,
+    text: "原来的顾虑",
+    status: "answered",
+  });
+  const downstream = s.data.answers[1].id;
+  s = g.mutateGuide(isolated, root.id, {
+    action: "editAnswer",
+    version: s.version,
+    answerId: s.data.answers[0].id,
+    status: "answered",
+    text: "现在目标改变了",
+    assessment: "clear",
+  });
+  assert(s.data.answers[1].review);
+  process.env.DEEPSEEK_API_KEY = "test-only-source-check";
+  try {
+    const result = await g.generateGuide(
+      isolated,
+      root.id,
+      { version: s.version },
+      async (_url, opts) => {
+        const input = JSON.parse(
+          JSON.parse(String(opts?.body)).messages[1].content,
+        );
+        assert(
+          !input.candidateSources.some(
+            (a: { id: string }) => a.id === downstream,
+          ),
+        );
+        return Response.json({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  question: null,
+                  candidates: [
+                    {
+                      direction: "concern",
+                      text: "旧顾虑不能直接采纳",
+                      kind: "card",
+                      cardType: "观点或推断",
+                      answerIds: [downstream],
+                    },
+                  ],
+                }),
+              },
+            },
+          ],
+        });
+      },
+    );
+    assert.equal(result.session.data.candidates.length, 0);
+    assert.equal(
+      JSON.parse(result.session.data.runs.at(-1)!.result).candidateWarnings
+        .length,
+      1,
+    );
+    assert.equal(service.list(isolated).length, 1);
   } finally {
     process.env.DEEPSEEK_API_KEY = "";
   }

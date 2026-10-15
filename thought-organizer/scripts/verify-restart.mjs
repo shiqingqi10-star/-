@@ -106,8 +106,15 @@ try {
   await expect(
     page.getByRole("heading", { name: "最让你犹豫的具体是什么？" }),
   ).toBeVisible();
+  const reframeSaved = page.waitForResponse(
+    (r) =>
+      r.url().endsWith("/api/guidance/" + root.id) &&
+      r.request().method() === "PATCH" &&
+      r.status() === 200,
+  );
   await page.getByRole("button", { name: "换个问法", exact: true }).click();
-  const reframed = await page.locator(".current-question h2").innerText();
+  const reframed = (await (await reframeSaved).json()).data.current.text;
+  await expect(page.locator(".current-question h2")).toHaveText(reframed);
   await page
     .getByLabel("你的回答", { exact: true })
     .fill("重启后继续写的回答草稿");
@@ -171,7 +178,7 @@ try {
   ).toBeVisible();
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await expect(
-    page.getByText("界面版本：思考更新 · 2026.10.15-r4", { exact: true }),
+    page.getByText("界面版本：思考更新 · 2026.10.15-r4.1", { exact: true }),
   ).toBeVisible();
   console.log(
     "PASS: production restart preserves authentication, complete old records, references, cards, versions, saved question, strategy history, answers, paused draft and advanced location; UI version confirmed",

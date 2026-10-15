@@ -112,3 +112,9 @@ JSON备份仍支持schemaVersion=1。新导出额外包含guidance/guidanceHisto
 `POST /guidance/:root/ai` 可带`intent:next|reframe`与reason，沿用原供应商/模型/额度。实际请求先持久审计；输出校验相关回答、明确前置条件、同目的改写、范围内目标与非事实来源。返回期间版本变动只保留过期分析，不覆盖当前状态。成功与失败均保留输入快照；不会用基础模板冒充AI结果。
 
 账号JSON导出的schemaVersion仍为1，新增可选guidanceRequests，并完整导出会话与历史。导入重映射显式实体引用、判断、更新、影响和输入快照，导入AI请求作为过期历史。Markdown包含新信息、行动结果和看法前后文字。
+
+## r4.1 候选来源校验
+
+AI输入快照新增candidateSources目录，列出允许引用的回答编号、状态、短摘录与用途。unknown只能用于问题、候选确认行动或问题卡片；skipped/review及其他范围的编号不可采纳。没有来源的候选也不可采纳。
+
+候选的来源错误单独拦截，不影响有效下一问与其他有效候选。原始candidates仍留在runs[].result及guidance_requests.result审计，新增candidateWarnings数组（text、reason）；只有通过校验的项进入data.candidates。确认接口仍只接受data.candidates中实际存在、未过期的候选。没有可采纳候选也是合法分析结果，不代表用户已完成决定。无效问题本身与格式/事实误标保护仍返回可读错误。

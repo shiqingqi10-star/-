@@ -309,4 +309,61 @@ test("明确开启AI后仍在当前页，失败保留回答并可切回基础；
     "这段不可以默认发送",
   );
   await expect(page.locator(".scope-disclosure")).toContainText("想结识新朋友");
+  const roots = await (await page.request.get("/api/entities")).json();
+  const root = roots.find(
+    (e: { data: { content: string } }) => e.data.content === sample,
+  );
+  const saved = await (
+    await page.request.get("/api/guidance/" + root.id)
+  ).json();
+  const next = {
+    ...saved,
+    version: saved.version + 1,
+    data: {
+      ...saved.data,
+      mode: "ai",
+      current: {
+        ...saved.data.current,
+        mode: "ai",
+        text: "这次你想先确认活动的哪一点？",
+      },
+      runs: [
+        ...saved.data.runs,
+        {
+          id: "test-partial-analysis",
+          stale: false,
+          createdAt: new Date().toISOString(),
+          snapshot: JSON.stringify({
+            entities: [root],
+            answers: saved.data.answers,
+          }),
+          result: JSON.stringify({
+            candidateWarnings: [
+              {
+                text: "来源不明的整理建议",
+                reason: "来源无法核对，未加入成果。",
+              },
+            ],
+          }),
+        },
+      ],
+    },
+  };
+  await page.unroute("**/api/guidance/*/ai");
+  await page.route("**/api/guidance/*/ai", (route) =>
+    route.fulfill({ json: { session: next, stale: false } }),
+  );
+  await page.getByRole("button", { name: "开启AI追问", exact: true }).click();
+  await expect(page.locator(".current-question h2")).toHaveText(
+    "这次你想先确认活动的哪一点？",
+  );
+  await expect(page.locator(".ai-source-warning")).toContainText("未加入成果");
+  await expect(page.locator(".notice.error[role=alert]")).toHaveCount(0);
+  await page.getByText("查看未加入的建议", { exact: true }).click();
+  await expect(page.locator(".ai-source-warning")).toContainText(
+    "来源不明的整理建议",
+  );
+  expect((await (await page.request.get("/api/entities")).json()).length).toBe(
+    roots.length,
+  );
 });

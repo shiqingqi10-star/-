@@ -316,6 +316,21 @@ export default function GuidedThinking({
     .filter((g) => g.answers.length);
   const candidates =
     session?.data.candidates.filter((c) => c.status !== "ignored") || [];
+  let sourceWarnings: { text: string; reason: string }[] = [];
+  const latestRun = session?.data.runs.at(-1);
+  if (latestRun && !latestRun.stale) {
+    try {
+      const warnings: unknown = JSON.parse(latestRun.result).candidateWarnings;
+      if (Array.isArray(warnings))
+        sourceWarnings = warnings.filter(
+          (w): w is { text: string; reason: string } =>
+            w !== null &&
+            typeof w === "object" &&
+            typeof w.text === "string" &&
+            typeof w.reason === "string",
+        );
+    } catch {}
+  }
   return (
     <div className="guided-space">
       <div className="guided-heading">
@@ -339,6 +354,23 @@ export default function GuidedThinking({
           >
             载入最新记录
           </button>
+        </div>
+      )}
+      {sourceWarnings.length > 0 && (
+        <div className="notice ai-source-warning" role="status">
+          <p>
+            上次AI分析有 {sourceWarnings.length}{" "}
+            条建议未通过来源核对，未加入成果。 原记录和有效追问已保留。
+          </p>
+          <details>
+            <summary>查看未加入的建议</summary>
+            {sourceWarnings.map((warning, index) => (
+              <div key={index}>
+                <p className="full-body">{warning.text}</p>
+                <p className="muted">{warning.reason}</p>
+              </div>
+            ))}
+          </details>
         </div>
       )}
       <div className="guided-layout">

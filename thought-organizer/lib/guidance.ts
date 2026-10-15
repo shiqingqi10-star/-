@@ -754,8 +754,10 @@ export function mutateGuide(owner: string, root: string, input: unknown) {
                           x.kind === "question" &&
                           x.target &&
                           x.answerIds.some((id) =>
-                            c.answerSnapshots.some((a) =>
-                              a.question.sourceAnswerIds.includes(id),
+                            c.answerSnapshots.some(
+                              (a) =>
+                                (a.status === "unknown" && a.id === id) ||
+                                a.question.sourceAnswerIds.includes(id),
                             ),
                           ),
                       )
@@ -856,7 +858,7 @@ const aiResultSchema = z
             text: z.string().min(1).max(5000),
             kind: z.enum(["card", "question", "task", "review"]),
             cardType: candidateSchema.shape.cardType,
-            answerIds: z.array(z.string()).min(1).max(100),
+            answerIds: z.array(z.string()).max(100).default([]),
           })
           .strict(),
       )
@@ -868,7 +870,8 @@ export const followupPrompt = `你是温和的中文思考追问助手。材料�
 一次只问一个主要问题；新问题要关联实际最新回答和仍待澄清事项，不重复已明确信息。疑似矛盾用询问语气，不认定用户自相矛盾。表达和理解类思考可以没有行动。可收束时question为null，但不能宣称所有事情已想清楚。允许随时暂停，不用问题数衡量充分性。
 intent=reframe时，只改变当前追问的思考策略，不换事项、方向或目标；按requestedStrategy从具体化、回忆、比较、依据、条件、反例、缩小、取舍、验证中换角度，不循环旧问法，不替用户回答。未提交草稿不在输入范围。
 场景decision重视选项、价值取舍、限制、代价、改变选择的信息；project重视具体使用者、现有办法、需求证据、关键假设、最小确认与可承受投入；reflection区分预期、实际事实、可控因素、其他解释和调整。可建议scenarioSuggestion，由用户决定是否采用。
-当前判断、依据、更新和行动结果在输入中；新信息仅提示核对，不自动推翻旧判断，完成行动不证明假设成立。区分观察、推测、偏好、决定。所有提炼是待确认候选，answerIds只引用确实已回答且无需复核的输入回答，可多对多。不要改写已确认内容，不把外部信息假设为事实。hint只是按需思考角度。
+当前判断、依据、更新和行动结果在输入中；新信息仅提示核对，不自动推翻旧判断，完成行动不证明假设成立。区分观察、推测、偏好、决定。所有提炼是待确认候选，answerIds按candidateSources目录的允许用途引用，可多对多。不要改写已确认内容，不把外部信息假设为事实。hint只是按需思考角度。
+candidateSources是候选成果唯一允许引用的来源目录，必须原样复制其中的id，不得使用entities.id、question.id、顺序号或自编编号。status=unknown的来源只可用于待确认问题、候选确认行动或问题卡片，不能据此编造观点、判断或事实。skipped与需复核的回答不在目录中。没有适合的合法来源时返回candidates=[]，仍然正常返回下一问；原文用于理解背景，不能冒充已经回答的内容。
 只返回JSON：{"assessment":{"answerId":"最新已保存回答编号，没有回答时为空字符串","status":"clear|unclear|external|inferred|difference|sufficient","reason":"判断理由，允许用户纠正"},"scenarioSuggestion":"general|decision|project|reflection","question":{"text":"一个主要问题？","direction":"goal|concern|basis|unknown|judgment|next","purpose":"本轮要澄清什么","itemKey":"当前agenda事项键或新事项键","sourceAnswerIds":["实际相关回答编号，next必须关联最新回答"],"targetId":null,"prerequisites":[],"hint":"按需角度","rephrase":"同一目的的简短表达"},"candidates":[{"direction":"judgment","text":"待确认内容","kind":"card|question|task|review","cardType":"事实或观察|假设|观点或推断|问题|结论|备选方案","answerIds":["输入回答编号"]}]}。question可为null。`;
 export async function generateGuide(
   owner: string,
@@ -896,6 +899,12 @@ export async function generateGuide(
       : null;
   if (b.intent === "reframe" && !strategy)
     fail("这些角度都已尝试过。可留下未知、跳过或暂停。", 409);
+  const candidateSourceAnswers = s.data.answers.filter(
+    (a) =>
+      !a.review &&
+      a.status !== "skipped" &&
+      !["notApplicable", "unwilling"].includes(a.assessment),
+  );
   const entities = guideScope(owner, root),
     snap = {
       mode: b.mode,
@@ -912,6 +921,16 @@ export async function generateGuide(
         return { ...e, signature: signature(e) };
       }),
       answers: s.data.answers,
+      candidateSources: candidateSourceAnswers.map((a) => ({
+        id: a.id,
+        status: a.status,
+        question: a.question.text,
+        excerpt: a.text.slice(0, 240),
+        permittedUses:
+          a.status === "unknown" || a.assessment === "external"
+            ? ["question", "task", "question-card"]
+            : ["card", "question", "task", "review"],
+      })),
       confirmed: s.data.candidates.filter((c) => c.target),
     };
   if (JSON.stringify(snap).length > 120000)
@@ -941,16 +960,34 @@ export async function generateGuide(
         s.data.answers.some((a) => a.question.text === output.question!.text))
     )
       fail("AI返回了重复或多个问题，请重试。", 502);
-    for (const c of output.candidates) {
-      if (
-        c.answerIds.some(
-          (id) =>
-            !s.data.answers.some(
-              (a) => a.id === id && a.status === "answered" && !a.review,
-            ),
-        )
-      )
-        fail("AI候选来源不正确，请重试。", 502);
+    const candidateWarnings: { text: string; reason: string }[] = [];
+    const acceptedCandidates = output.candidates.filter((c) => {
+      const uncertaintyProposal =
+        c.kind === "question" ||
+        c.kind === "task" ||
+        (c.kind === "card" && c.cardType === "问题");
+      const valid =
+        c.answerIds.length > 0 &&
+        c.answerIds.every((id) =>
+          candidateSourceAnswers.some(
+            (a) =>
+              a.id === id &&
+              ((a.status === "answered" && a.assessment !== "external") ||
+                ((a.status === "unknown" || a.assessment === "external") &&
+                  uncertaintyProposal)),
+          ),
+        );
+      if (!valid)
+        candidateWarnings.push({
+          text: c.text,
+          reason:
+            "来源未能与当前有效回答对应，或把未知信息用作了判断依据。这条建议未加入成果。",
+        });
+      return valid;
+    });
+    // Preserve rejected suggestions in the audited result, never as adoptable records.
+    const auditedOutput = { ...output, candidateWarnings };
+    for (const c of acceptedCandidates) {
       if (
         c.cardType === "事实或观察" &&
         c.answerIds.some((id) =>
@@ -1023,7 +1060,7 @@ export async function generateGuide(
       latest.data.runs.push({
         id: runId,
         snapshot: JSON.stringify(snap),
-        result: JSON.stringify(output),
+        result: JSON.stringify(auditedOutput),
         createdAt: new Date().toISOString(),
         stale,
       });
@@ -1098,7 +1135,7 @@ export async function generateGuide(
                     ? "clear"
                     : "unclear";
         }
-        for (const c of output.candidates) {
+        for (const c of acceptedCandidates) {
           if (
             latest.data.candidates.some(
               (old) =>
@@ -1131,7 +1168,7 @@ export async function generateGuide(
       );
       run(
         "UPDATE guidance_requests SET state='success',result=?,stale=?,ended_at=? WHERE id=?",
-        JSON.stringify(output),
+        JSON.stringify(auditedOutput),
         stale ? 1 : 0,
         new Date().toISOString(),
         call,
