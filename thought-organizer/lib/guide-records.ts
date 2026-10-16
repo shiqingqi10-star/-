@@ -105,6 +105,7 @@ export function guideInputScope(owner: string, root: string) {
   return {
     entities: guideScope(owner, root),
     answers: s.data.answers,
+    outline: s.data.outline.entries,
     corrections: s.data.understandings,
     latestRunId:
       one<{ id: string }>(

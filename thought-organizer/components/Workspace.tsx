@@ -36,7 +36,7 @@ import {
 } from "@/lib/presentation";
 import Editor, { EditRequest } from "./Editor";
 import ThinkingSpace from "./ThinkingSpace";
-import GuidedThinking from "./GuidedThinking";
+import OrganizedThinking from "./OrganizedThinking";
 import ThinkingChanges from "./ThinkingChanges";
 import {
   UI_VERSION,
@@ -589,6 +589,7 @@ export default function Workspace() {
         content,
         token: quickToken.current.token,
         organize,
+        initial: organize,
       });
       quickToken.current = null;
       try {
@@ -1149,10 +1150,15 @@ export default function Workspace() {
                       disabled={busy || !quick.trim()}
                       onClick={() => void saveQuick(true)}
                     >
-                      {busy ? "保存中…" : "开始梳理"}
+                      {busy ? "保存中…" : "开始整理"}
                     </button>
                   </div>
                 </div>
+                <p className="muted quick-ai-note">
+                  {user.aiConfigured
+                    ? "开始整理会使用AI，原文会先保存。"
+                    : "AI尚未配置；原文、手动整理和基础引导仍可使用。"}
+                </p>
               </section>
               {recentThoughts(alive).length > 0 && (
                 <section className="continue-section">
@@ -1285,7 +1291,7 @@ export default function Workspace() {
             </>
           )}
           {page === "思考空间" && t && !advanced && (
-            <GuidedThinking
+            <OrganizedThinking
               key={t.id}
               root={t}
               rows={thinkingScope(alive, t)}

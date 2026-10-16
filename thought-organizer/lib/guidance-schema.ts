@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { outlineSchema, emptyOutline } from "./outline-schema";
 export const directions = [
   "goal",
   "concern",
@@ -225,6 +226,7 @@ export const impactSchema = z
   .strict();
 export const guideSchema = z
   .object({
+    outline: outlineSchema.default(emptyOutline),
     current: questionSchema.nullable(),
     answers: z.array(answerSchema).max(300),
     candidates: z.array(candidateSchema).max(500),

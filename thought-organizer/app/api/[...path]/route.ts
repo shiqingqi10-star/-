@@ -45,6 +45,7 @@ import {
   DatabaseUnavailableError,
   databaseDiagnostic,
 } from "@/lib/db";
+import { generateOutline, mutateOutline } from "@/lib/outline";
 import { updateThinking } from "@/lib/thinking-updates";
 import {
   compactGuide,
@@ -207,6 +208,10 @@ async function handle(
               ),
         );
       if (id && req.method === "POST") {
+        if (action === "outline") {
+          const r = await generateOutline(user.id, id, b);
+          return reply({ ...r, session: present(r.session) });
+        }
         if (action === "updates") {
           const r = updateThinking(user.id, id, b);
           return reply({ ...r, session: present(r.session) });
@@ -218,7 +223,13 @@ async function handle(
         return reply(present(initializeGuide(user.id, id)));
       }
       if (id && req.method === "PATCH")
-        return reply(present(mutateGuide(user.id, id, b)));
+        return reply(
+          present(
+            action === "outline"
+              ? mutateOutline(user.id, id, b)
+              : mutateGuide(user.id, id, b),
+          ),
+        );
     }
     if (route === "entities") {
       if (req.method === "GET") {

@@ -720,13 +720,20 @@ export function importData(owner: string, body: unknown) {
       .max(10000)
       .parse(b.guidance || []);
     const guideIds = new Map<string, string>();
+    const requestIds = new Map<string, string>();
+    const remapRequest = (id: string) => {
+      if (!requestIds.has(id)) requestIds.set(id, randomUUID());
+      return requestIds.get(id)!;
+    };
     const importGuide = (raw: string) => {
       const d = guideSchema.parse(JSON.parse(raw));
       for (const c of d.candidates) {
         if (c.target) c.target = remap(c.target);
         c.stale = true;
+        if (c.runId) c.runId = remapRequest(c.runId);
       }
       for (const r of d.runs) {
+        r.id = remapRequest(r.id);
         r.snapshot = JSON.stringify(rewrite(JSON.parse(r.snapshot)));
         r.stale = true;
       }
@@ -758,6 +765,37 @@ export function importData(owner: string, body: unknown) {
         i.entityId = remap(i.entityId);
       });
       if (d.current?.mode === "ai") d.current.review = true;
+      for (const e of d.outline.entries) {
+        if (e.runId) e.runId = remapRequest(e.runId);
+        if (e.targetId) e.targetId = remap(e.targetId);
+        e.review = true;
+        for (const src of e.sources)
+          if (src.kind === "entity") {
+            src.id = remap(src.id);
+            src.signature = "imported-history";
+          }
+      }
+      for (const c of d.outline.changes) {
+        c.review = true;
+        c.runId = remapRequest(c.runId);
+        for (const src of c.sources)
+          if (src.kind === "entity") {
+            src.id = remap(src.id);
+            src.signature = "imported-history";
+          }
+      }
+      if (d.outline.questionRunId)
+        d.outline.questionRunId = remapRequest(d.outline.questionRunId);
+      d.outline.autoToken = null;
+      d.outline.attempted = true;
+      d.outline.jobs.forEach((j) => {
+        j.stale = true;
+        if (j.id) j.id = remapRequest(j.id);
+        if (j.state === "running") {
+          j.state = "error";
+          j.message = "导入的历史请求未继续运行。";
+        }
+      });
       d.rootSignature = "imported-history";
       return JSON.stringify(d);
     };
@@ -827,7 +865,7 @@ export function importData(owner: string, body: unknown) {
       if (!session) fail("AI请求所属梳理记录无效");
       run(
         "INSERT INTO guidance_requests VALUES(?,?,?,?,?,?,?,?,?,?)",
-        randomUUID(),
+        remapRequest(r.id),
         owner,
         session,
         JSON.stringify(rewrite(JSON.parse(r.snapshot))),

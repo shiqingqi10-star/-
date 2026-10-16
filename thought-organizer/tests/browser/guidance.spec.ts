@@ -1,8 +1,20 @@
 import { test, expect, Page } from "@playwright/test";
+import { verifyOutlineFlow } from "./outline-flow";
 const headers = {
   Origin: process.env.PLAYWRIGHT_BASE_URL || "http://localhost:3100",
 };
 const sample = "我想参加周末的活动，但怕占用时间，又担心错过认识新朋友的机会。";
+async function openQuestionTool(page: Page) {
+  if (!(await page.locator(".current-question").isVisible())) {
+    await page
+      .getByRole("button", { name: "更多操作：梳理", exact: true })
+      .click();
+    await page
+      .getByRole("menuitem", { name: "完整追问工具", exact: true })
+      .click();
+  }
+  await expect(page.locator(".current-question")).toBeVisible();
+}
 async function signup(page: Page) {
   const r = await page.request.post("/api/auth/register", {
     headers,
@@ -21,10 +33,23 @@ async function respond(page: Page, text: string, button = "继续") {
 }
 async function start(page: Page) {
   await page.getByLabel("写下想法", { exact: true }).fill(sample);
-  await page.getByRole("button", { name: "开始梳理", exact: true }).click();
+  await page.getByRole("button", { name: "开始整理", exact: true }).click();
+  await expect(
+    page
+      .locator(".organized-space")
+      .or(page.locator(".current-question"))
+      .or(page.locator(".notice.error[role=alert]")),
+  ).toBeVisible();
+  if (
+    await page
+      .getByRole("heading", { name: "梳理这个问题", exact: true })
+      .isVisible()
+  )
+    await openQuestionTool(page);
   await expect(
     page.getByRole("heading", { name: "梳理这个问题", exact: true }),
   ).toBeVisible();
+  await openQuestionTool(page);
   await expect(
     page.getByRole("heading", { name: "你最希望得到什么？", exact: true }),
   ).toBeVisible();
@@ -43,7 +68,19 @@ async function focusedCoverage(page: Page) {
   await page
     .getByLabel("写下想法", { exact: true })
     .fill("我在思考今天买不买这件衣服。");
-  await page.getByRole("button", { name: "开始梳理", exact: true }).click();
+  await page.getByRole("button", { name: "开始整理", exact: true }).click();
+  await expect(
+    page
+      .locator(".organized-space")
+      .or(page.locator(".current-question"))
+      .or(page.locator(".notice.error[role=alert]")),
+  ).toBeVisible();
+  if (
+    await page
+      .getByRole("heading", { name: "梳理这个问题", exact: true })
+      .isVisible()
+  )
+    await openQuestionTool(page);
   await expect(page.locator(".current-question h2")).toHaveText(
     "你最希望得到什么？",
   );
@@ -134,6 +171,20 @@ async function focusedCoverage(page: Page) {
   await expect(page.locator(".guided-heading")).toContainText("草稿已保存");
   await page.reload();
   await expect(
+    page.getByRole("heading", { name: "梳理这个问题", exact: true }).or(
+      page.getByRole("heading", {
+        name: "有什么问题，你想理清楚？",
+        exact: true,
+      }),
+    ),
+  ).toBeVisible();
+  if (
+    await page
+      .getByRole("heading", { name: "梳理这个问题", exact: true })
+      .isVisible()
+  )
+    await openQuestionTool(page);
+  await expect(
     page.getByLabel("有，已经有明确安排", { exact: true }),
   ).toBeChecked();
   await expect(page.getByLabel("你的回答", { exact: true })).toHaveValue(
@@ -219,7 +270,19 @@ async function focusedCoverage(page: Page) {
   await page
     .getByLabel("写下想法", { exact: true })
     .fill("周末参加活动还是休息？");
-  await page.getByRole("button", { name: "开始梳理", exact: true }).click();
+  await page.getByRole("button", { name: "开始整理", exact: true }).click();
+  await expect(
+    page
+      .locator(".organized-space")
+      .or(page.locator(".current-question"))
+      .or(page.locator(".notice.error[role=alert]")),
+  ).toBeVisible();
+  if (
+    await page
+      .getByRole("heading", { name: "梳理这个问题", exact: true })
+      .isVisible()
+  )
+    await openQuestionTool(page);
   await expect(page.locator(".current-question h2")).toHaveText(
     "你最希望得到什么？",
   );
@@ -233,6 +296,20 @@ async function focusedCoverage(page: Page) {
   await page.getByLabel("你的回答", { exact: true }).fill("也想留一点安静时间");
   await page.getByRole("button", { name: "先到这里", exact: true }).click();
   await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "梳理这个问题", exact: true }).or(
+      page.getByRole("heading", {
+        name: "有什么问题，你想理清楚？",
+        exact: true,
+      }),
+    ),
+  ).toBeVisible();
+  if (
+    await page
+      .getByRole("heading", { name: "梳理这个问题", exact: true })
+      .isVisible()
+  )
+    await openQuestionTool(page);
   await expect(page.getByLabel("时间与精力", { exact: true })).toBeChecked();
   await expect(
     page.getByLabel("体验与个人偏好", { exact: true }),
@@ -310,6 +387,20 @@ test("两页真实核心场景、候选预览确认、暂停恢复和改答核�
   ).json();
   expect(pausedSession.data.paused).toBe(true);
   await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "梳理这个问题", exact: true }).or(
+      page.getByRole("heading", {
+        name: "有什么问题，你想理清楚？",
+        exact: true,
+      }),
+    ),
+  ).toBeVisible();
+  if (
+    await page
+      .getByRole("heading", { name: "梳理这个问题", exact: true })
+      .isVisible()
+  )
+    await openQuestionTool(page);
   await expect(page.getByLabel("你的回答", { exact: true })).toHaveValue(
     "向组织者了解人群和活动时长",
   );
@@ -407,6 +498,7 @@ test("两页真实核心场景、候选预览确认、暂停恢复和改答核�
   await expect(
     page.getByRole("heading", { name: "梳理这个问题", exact: true }),
   ).toBeVisible();
+  await openQuestionTool(page);
   await expect(page.locator(".expanded-guide-results")).toHaveCount(0);
   await page
     .getByRole("button", { name: "查看成果", exact: true })
@@ -414,6 +506,7 @@ test("两页真实核心场景、候选预览确认、暂停恢复和改答核�
     .click();
   await expect(page.locator(".guided-results")).toContainText("优先认识同行");
   await focusedCoverage(page);
+  await verifyOutlineFlow(page);
   expect(errors).toEqual([]);
 });
 test("重复点击和失败重试不会重复创建，HTML错误保留草稿，手机当前问题不溢出", async ({
@@ -428,7 +521,19 @@ test("重复点击和失败重试不会重复创建，HTML错误保留草稿，�
       body: "<html>internal sqlite error</html>",
     }),
   );
-  await page.getByRole("button", { name: "开始梳理", exact: true }).click();
+  await page.getByRole("button", { name: "开始整理", exact: true }).click();
+  await expect(
+    page
+      .locator(".organized-space")
+      .or(page.locator(".current-question"))
+      .or(page.locator(".notice.error[role=alert]")),
+  ).toBeVisible();
+  if (
+    await page
+      .getByRole("heading", { name: "梳理这个问题", exact: true })
+      .isVisible()
+  )
+    await openQuestionTool(page);
   await expect(page.locator(".notice.error[role=alert]")).toContainText(
     "服务暂时繁忙",
   );
@@ -440,11 +545,12 @@ test("重复点击和失败重试不会重复创建，HTML错误保留草稿，�
   );
   await page.unroute("**/api/guidance");
   await page
-    .getByRole("button", { name: "开始梳理", exact: true })
+    .getByRole("button", { name: "开始整理", exact: true })
     .evaluate((e: HTMLButtonElement) => {
       e.click();
       e.click();
     });
+  await openQuestionTool(page);
   await expect(
     page.getByRole("heading", { name: "你最希望得到什么？" }),
   ).toBeVisible();
@@ -466,6 +572,20 @@ test("重复点击和失败重试不会重复创建，HTML错误保留草稿，�
     "希望有更清楚的选择",
   );
   await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "梳理这个问题", exact: true }).or(
+      page.getByRole("heading", {
+        name: "有什么问题，你想理清楚？",
+        exact: true,
+      }),
+    ),
+  ).toBeVisible();
+  if (
+    await page
+      .getByRole("heading", { name: "梳理这个问题", exact: true })
+      .isVisible()
+  )
+    await openQuestionTool(page);
   await expect(page.getByLabel("你的回答", { exact: true })).toHaveValue(
     "希望有更清楚的选择",
   );
@@ -487,6 +607,7 @@ test("重复点击和失败重试不会重复创建，HTML错误保留草稿，�
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBeTruthy();
+  await openQuestionTool(page);
   await expect(page.locator(".expanded-guide-results")).toHaveCount(0);
   await page.screenshot({
     path: "data/guidance-r3-question-mobile.png",
@@ -521,6 +642,7 @@ test("明确开启AI后仍在当前页，失败保留回答并可切回基础；
   await expect(page.locator(".notice.error[role=alert]")).toContainText(
     "测试AI超时",
   );
+  await openQuestionTool(page);
   await expect(
     page.getByRole("heading", { name: "你最希望得到什么？" }),
   ).toBeVisible();

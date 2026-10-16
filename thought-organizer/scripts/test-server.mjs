@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
@@ -6,6 +6,16 @@ const origin = process.env.PLAYWRIGHT_BASE_URL || "http://localhost:3100";
 const port = new URL(origin).port || "3100";
 const directory = mkdtempSync(join(tmpdir(), "thought-ui-"));
 const production = process.env.BROWSER_TEST_MODE === "production";
+const metadata = process.env.PLAYWRIGHT_TEST_DB_META;
+if (metadata) {
+  if (!metadata.startsWith(join(tmpdir(), "thought-playwright-")))
+    throw Error("测试元数据路径必须在临时目录");
+  writeFileSync(
+    metadata,
+    JSON.stringify({ directory, database: join(directory, "test.sqlite") }),
+    { mode: 0o600 },
+  );
+}
 const child = spawn(
   process.execPath,
   [
@@ -31,6 +41,10 @@ const child = spawn(
   },
 );
 function stop() {
+  if (metadata)
+    try {
+      unlinkSync(metadata);
+    } catch {}
   try {
     child.kill("SIGTERM");
   } catch {}

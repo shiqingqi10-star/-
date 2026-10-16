@@ -118,3 +118,9 @@ JSON备份仍支持schemaVersion=1。新导出额外包含guidance/guidanceHisto
 AI输入快照新增candidateSources目录，列出允许引用的回答编号、状态、短摘录与用途。unknown只能用于问题、候选确认行动或问题卡片；skipped/review及其他范围的编号不可采纳。没有来源的候选也不可采纳。
 
 候选的来源错误单独拦截，不影响有效下一问与其他有效候选。原始candidates仍留在runs[].result及guidance_requests.result审计，新增candidateWarnings数组（text、reason）；只有通过校验的项进入data.candidates。确认接口仍只接受data.candidates中实际存在、未过期的候选。没有可采纳候选也是合法分析结果，不代表用户已完成决定。无效问题本身与格式/事实误标保护仍返回可读错误。
+
+## r6整理成果
+
+`POST /api/guidance/:root/outline?compact=1` 接受会话 `version`、幂等 `token`、`intent`（initial/update/question）及可选 `focusId`。仅使用当前思考及明确关联内容；输入快照可经既有运行记录查看。查看会话不触发分析。重复token不重复调用，过期结果保留为历史而不覆盖新内容。
+
+`PATCH /api/guidance/:root/outline?compact=1` 复用身份及来源校验，接受带version的操作：note、change、confirm、focus、pause、comparison。以 `lib/outline.ts` 的输入验证为准。编辑检查条目版本；确认记录检查既有正式记录版本。来源保留实体、回答及草稿版本；AI候选须明确预览确认。空密钥不影响手动PATCH。

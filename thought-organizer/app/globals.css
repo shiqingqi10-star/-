@@ -2201,3 +2201,218 @@ pre {
 .answer-option > span {
   margin-bottom: 0;
 }
+
+/* r6: saved understanding is the primary workspace; questions are optional. */
+.organized-space {
+  max-width: 960px;
+  margin: 0 auto;
+  min-width: 0;
+}
+.organized-heading {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+.organized-heading .thinking-name {
+  margin-right: auto;
+  max-width: 65%;
+}
+.organized-heading > .muted {
+  font-size: 13px;
+}
+.outline-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 28px 0 24px;
+}
+.outline-title h2 {
+  font-size: 24px;
+  margin-bottom: 8px;
+}
+.outline-title p {
+  font-size: 14px;
+  line-height: 1.8;
+}
+.outline-notes {
+  padding: 0 28px;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.outline-note {
+  padding: 18px 0;
+  border-bottom: 1px solid var(--border);
+}
+.outline-note:last-child {
+  border-bottom: 0;
+}
+.note-caption {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--secondary);
+  margin-bottom: 10px;
+}
+.note-caption small {
+  font-size: 12px;
+}
+.note-text {
+  display: block;
+  text-align: left;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.85;
+  font-size: 16px;
+  width: 100%;
+}
+.note-text:hover {
+  background: var(--background);
+}
+.note-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+}
+.note-actions > .text-button {
+  font-size: 13px;
+  padding-left: 0;
+}
+.note-actions .more-menu {
+  margin-left: auto;
+}
+.outline-primary-actions,
+.organized-secondary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 28px;
+}
+.organized-secondary {
+  margin-top: 16px;
+}
+.outline-empty {
+  padding: 24px 0;
+  line-height: 1.8;
+}
+.outline-empty .bar {
+  margin-top: 16px;
+}
+.outline-empty .muted {
+  margin-top: 16px;
+}
+.outline-empty .full-body {
+  margin-top: 12px;
+}
+.previous-structure,
+.outline-changes,
+.comparison-summary {
+  margin-top: 28px;
+  line-height: 1.8;
+}
+.previous-structure article {
+  margin-top: 20px;
+}
+.previous-structure small {
+  color: var(--secondary);
+}
+.outline-changes > article {
+  padding: 20px 0;
+  border-bottom: 1px solid var(--border);
+}
+.outline-changes details {
+  font-size: 14px;
+  margin: 12px 0;
+  color: var(--secondary);
+}
+.change-before {
+  color: var(--secondary);
+  font-size: 14px;
+  margin: 8px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.quick-ai-note {
+  font-size: 13px;
+  margin-top: 12px;
+}
+.comparison-options,
+.comparison-cells {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.comparison-dimension {
+  margin: 24px 0;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+.comparison-cell {
+  min-width: 0;
+  padding: 12px;
+  background: var(--background);
+  border-radius: var(--radius-sm);
+}
+.comparison-cell strong {
+  display: block;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  line-height: 1.7;
+  font-size: 14px;
+}
+.comparison-cell textarea {
+  min-height: 88px;
+}
+.comparison-summary p {
+  overflow-wrap: anywhere;
+}
+.organized-space .notice {
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+}
+@media (max-width: 600px) {
+  .organized-heading {
+    gap: 10px;
+  }
+  .organized-heading .thinking-name {
+    flex-basis: 100%;
+    max-width: 100%;
+  }
+  .outline-title {
+    gap: 8px;
+  }
+  .outline-title h2 {
+    font-size: 22px;
+  }
+  .outline-notes {
+    padding: 0 18px;
+  }
+  .outline-note {
+    padding: 20px 0;
+  }
+  .note-text {
+    font-size: 15px;
+  }
+  .outline-primary-actions {
+    gap: 8px;
+  }
+  .comparison-options,
+  .comparison-cells {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .organized-space button {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}

@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { chromium, expect } from "@playwright/test";
 const directory = mkdtempSync(join(tmpdir(), "thought-restart-"));
 const port = process.env.RESTART_TEST_PORT || "3200";
@@ -100,6 +101,12 @@ try {
   await page.goto(origin);
   await page.getByRole("button", { name: "旧版独立思考", exact: true }).click();
   await page
+    .getByRole("button", { name: "更多操作：梳理", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "完整追问工具", exact: true })
+    .click();
+  await page
     .getByLabel("你的回答", { exact: true })
     .fill("保留已有思考，并继续弄清条件");
   await page.getByRole("button", { name: "继续", exact: true }).click();
@@ -121,7 +128,7 @@ try {
     .fill("重启后继续写的回答草稿");
   await page.getByRole("button", { name: "先到这里", exact: true }).click();
   await expect(page.locator(".guided-heading")).toContainText("草稿已保存");
-  const guideBefore = await (
+  let guideBefore = await (
     await page.request.get(origin + "/api/guidance/" + root.id)
   ).json();
   await page.getByRole("button", { name: "更多操作：梳理" }).click();
@@ -142,6 +149,51 @@ try {
       return (await r.json()).data.lastPosition;
     })
     .toBe("question");
+  let outlineResponse = await page.request.patch(
+    origin + "/api/guidance/" + root.id + "/outline",
+    {
+      headers,
+      data: {
+        action: "note",
+        version: guideBefore.version,
+        token: randomUUID(),
+        category: "known",
+        text: "重启后继续使用的整理草稿",
+      },
+    },
+  );
+  assert.equal(outlineResponse.status(), 200);
+  guideBefore = await outlineResponse.json();
+  outlineResponse = await page.request.patch(
+    origin + "/api/guidance/" + root.id + "/outline",
+    {
+      headers,
+      data: {
+        action: "comparison",
+        version: guideBefore.version,
+        comparison: {
+          options: [
+            { id: "keep", text: "保留现状", sourceIds: [] },
+            { id: "learn", text: "继续了解", sourceIds: [] },
+          ],
+          dimensions: [
+            {
+              id: "info",
+              label: "还需要的信息",
+              values: [
+                { optionId: "keep", text: "", state: "unknown" },
+                { optionId: "learn", text: "先了解关键条件", state: "known" },
+              ],
+            },
+          ],
+        },
+      },
+    },
+  );
+  assert.equal(outlineResponse.status(), 200);
+  guideBefore = await (
+    await page.request.get(origin + "/api/guidance/" + root.id)
+  ).json();
   const before = await (
     await page.request.get(origin + "/api/entities")
   ).json();
@@ -159,6 +211,19 @@ try {
   ).json();
   assert.deepEqual(guideAfter, guideBefore);
   await page.getByRole("button", { name: "返回当前追问", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "我的思考", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("当前整理成果")).toContainText(
+    "重启后继续使用的整理草稿",
+  );
+  await expect(page.locator(".comparison-summary")).toContainText("继续了解");
+  await page
+    .getByRole("button", { name: "更多操作：梳理", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "完整追问工具", exact: true })
+    .click();
   await expect(page.getByLabel("你的回答", { exact: true })).toHaveValue(
     "重启后继续写的回答草稿",
   );
@@ -179,10 +244,10 @@ try {
   ).toBeVisible();
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await expect(
-    page.getByText("界面版本：思考空间 · 2026.10.16-r5", { exact: true }),
+    page.getByText("界面版本：整理成果 · 2026.10.16-r6", { exact: true }),
   ).toBeVisible();
   console.log(
-    "PASS: production restart preserves authentication, complete old records, references, cards, versions, saved question, strategy history, answers, paused draft and advanced location; UI version confirmed",
+    "PASS: production restart preserves authentication, complete old records, references, cards, versions, saved question, strategy history, answers, paused draft, saved outline, comparison and advanced location; UI version confirmed",
   );
 } finally {
   await browser?.close();

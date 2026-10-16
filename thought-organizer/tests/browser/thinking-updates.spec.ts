@@ -2,6 +2,17 @@ import { test, expect, Page } from "@playwright/test";
 const headers = {
   Origin: process.env.PLAYWRIGHT_BASE_URL || "http://localhost:3100",
 };
+async function openQuestionTool(page: Page) {
+  if (!(await page.locator(".current-question").isVisible())) {
+    await page
+      .getByRole("button", { name: "更多操作：梳理", exact: true })
+      .click();
+    await page
+      .getByRole("menuitem", { name: "完整追问工具", exact: true })
+      .click();
+  }
+  await expect(page.locator(".current-question")).toBeVisible();
+}
 async function signup(page: Page) {
   const r = await page.request.post("/api/auth/register", {
     headers,
@@ -18,7 +29,19 @@ async function start(
   text = "我想做收费小工具，因为大家应该都有这个需求。",
 ) {
   await page.getByLabel("写下想法", { exact: true }).fill(text);
-  await page.getByRole("button", { name: "开始梳理", exact: true }).click();
+  await page.getByRole("button", { name: "开始整理", exact: true }).click();
+  await expect(
+    page
+      .locator(".organized-space")
+      .or(page.locator(".current-question"))
+      .or(page.locator(".notice.error[role=alert]")),
+  ).toBeVisible();
+  if (
+    await page
+      .getByRole("heading", { name: "梳理这个问题", exact: true })
+      .isVisible()
+  )
+    await openQuestionTool(page);
   await expect(page.locator(".current-question h2")).toContainText(
     "你最希望得到什么",
   );
@@ -77,6 +100,22 @@ test("换策略不循环且保留回答，切场景暂存恢复，外部未知�
     page.getByRole("button", { name: "换个问法", exact: true }),
   ).toBeDisabled();
   await page.reload();
+  await expect(
+    page
+      .getByRole("heading", { name: "梳理这个问题", exact: true })
+      .or(
+        page.getByRole("heading", {
+          name: "有什么问题，你想理清楚？",
+          exact: true,
+        }),
+      ),
+  ).toBeVisible();
+  if (
+    await page
+      .getByRole("heading", { name: "梳理这个问题", exact: true })
+      .isVisible()
+  )
+    await openQuestionTool(page);
   await expect(page.getByLabel("你的回答", { exact: true })).toHaveValue(
     "还没有提交，但不能丢失的思考。",
   );
@@ -254,6 +293,22 @@ test("从推测到访谈结果再更新原判断，依据历史回接，重复�
     fullPage: true,
   });
   await page.reload();
+  await expect(
+    page
+      .getByRole("heading", { name: "梳理这个问题", exact: true })
+      .or(
+        page.getByRole("heading", {
+          name: "有什么问题，你想理清楚？",
+          exact: true,
+        }),
+      ),
+  ).toBeVisible();
+  if (
+    await page
+      .getByRole("heading", { name: "梳理这个问题", exact: true })
+      .isVisible()
+  )
+    await openQuestionTool(page);
   await page.getByRole("button", { name: "查看成果", exact: true }).click();
   await page.locator(".living-judgments > summary").click();
   await expect(page.locator(".living-judgments")).toContainText("暂缓收费工具");
@@ -291,6 +346,22 @@ test("三种场景无AI可选、保存失败保留更新草稿、冲突不覆盖
   await expect(form.locator("[role=alert]")).toContainText("草稿仍保留");
   await page.keyboard.press("Escape");
   await page.reload();
+  await expect(
+    page
+      .getByRole("heading", { name: "梳理这个问题", exact: true })
+      .or(
+        page.getByRole("heading", {
+          name: "有什么问题，你想理清楚？",
+          exact: true,
+        }),
+      ),
+  ).toBeVisible();
+  if (
+    await page
+      .getByRole("heading", { name: "梳理这个问题", exact: true })
+      .isVisible()
+  )
+    await openQuestionTool(page);
   await page.getByRole("button", { name: "查看成果", exact: true }).click();
   await page.getByRole("button", { name: "我改变想法了", exact: true }).click();
   await expect(

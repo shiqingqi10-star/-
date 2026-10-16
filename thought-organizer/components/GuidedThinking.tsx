@@ -49,6 +49,10 @@ export default function GuidedThinking({
   onGraph,
   onAdd,
   onExport,
+  onAnswered,
+  onPause,
+  initialTool = null,
+  initialEditing = null,
 }: {
   root: Entity;
   rows: Entity[];
@@ -62,6 +66,10 @@ export default function GuidedThinking({
   onGraph: () => void;
   onAdd: (kind: "question" | "task" | "evidence" | "review") => void;
   onExport: () => void;
+  onAnswered?: (s: GuideSession) => Promise<void>;
+  onPause?: (s: GuideSession) => void;
+  initialTool?: "adjust" | null;
+  initialEditing?: GuideAnswer | null;
 }) {
   const [session, setSession] = useState<GuideSession | null>(null),
     [answer, setAnswer] = useState(""),
@@ -72,7 +80,7 @@ export default function GuidedThinking({
     [assessment, setAssessment] = useState<Assessment>("unspecified"),
     [results, setResults] = useState(false),
     [preview, setPreview] = useState<Choice[] | null>(null),
-    [editing, setEditing] = useState<GuideAnswer | null>(null),
+    [editing, setEditing] = useState<GuideAnswer | null>(initialEditing),
     [versions, setVersions] = useState<
       { version: number; data: GuideData; created_at: string }[] | null
     >(null),
@@ -85,7 +93,7 @@ export default function GuidedThinking({
       detail: "",
     }),
     [tool, setTool] = useState<"original" | "adjust" | "runs" | "scope" | null>(
-      null,
+      initialTool,
     ),
     [historyFrom, setHistoryFrom] = useState<string | null>(null),
     [clueDetail, setClueDetail] = useState<GuideClue | null>(null),
@@ -270,6 +278,10 @@ export default function GuidedThinking({
       } catch {}
       if (status === "unknown")
         setSaved("已保存 · 你留下了一个需要确认的信息。");
+      if (updated && onAnswered) {
+        await onAnswered(updated);
+        return;
+      }
       if (updated?.data.mode === "ai" && user.aiConfigured) {
         try {
           await ai(updated);
@@ -304,6 +316,10 @@ export default function GuidedThinking({
       const s = wantPreview
         ? await mutate({ action: "prepare" }, valueRef.current)
         : sessionRef.current;
+      if (pause && onPause && s) {
+        onPause(s);
+        return;
+      }
       setResults(true);
       if (wantPreview && s)
         setPreview(
@@ -451,6 +467,15 @@ export default function GuidedThinking({
   }
   return (
     <div className="guided-space focused-space">
+      {onPause && (
+        <button
+          className="text-button"
+          disabled={busy}
+          onClick={() => void showResults(true)}
+        >
+          返回整理成果
+        </button>
+      )}
       <div className="guided-heading">
         <button
           className="thinking-name text-button"

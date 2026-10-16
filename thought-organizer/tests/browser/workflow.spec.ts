@@ -742,7 +742,7 @@ test("无AI完整手动场景：独立原文、观点、疑问、关联行动、
   const original =
     "我想参加周末的活动，但怕占用时间，又担心错过认识新朋友的机会。\n\n  这段空白和补充文字也要完整保存。  ";
   await page.getByLabel("写下想法", { exact: true }).fill(original);
-  await page.getByRole("button", { name: "开始梳理", exact: true }).click();
+  await page.getByRole("button", { name: "开始整理", exact: true }).click();
   await advancedPage(page);
   await expect(page.getByRole("group", { name: "思考阶段" })).toBeVisible();
   const rows: Entity[] = await (await page.request.get("/api/entities")).json();
@@ -883,7 +883,7 @@ test("无AI完整手动场景：独立原文、观点、疑问、关联行动、
   });
   await mobileNav(page, "设置");
   await expect(
-    page.getByText("界面版本：思考空间 · 2026.10.16-r5", { exact: true }),
+    page.getByText("界面版本：整理成果 · 2026.10.16-r6", { exact: true }),
   ).toBeVisible();
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.screenshot({
@@ -909,7 +909,7 @@ test("保存失败保留完整草稿；独立AI范围不泄露无关思考，保
       });
     else await route.continue();
   });
-  await page.getByRole("button", { name: "开始梳理", exact: true }).click();
+  await page.getByRole("button", { name: "开始整理", exact: true }).click();
   await expect(
     page.getByRole("alert").filter({ hasText: "测试保存失败" }),
   ).toBeVisible();
@@ -926,7 +926,7 @@ test("保存失败保留完整草稿；独立AI范围不泄露无关思考，保
     title: "无关思考",
     content: "这段无关私人内容不能进入分析",
   });
-  await page.getByRole("button", { name: "开始梳理", exact: true }).click();
+  await page.getByRole("button", { name: "开始整理", exact: true }).click();
   await advancedPage(page);
   await expect(page.getByRole("group", { name: "思考阶段" })).toBeVisible();
   await page.getByRole("button", { name: "AI助手", exact: true }).click();
@@ -1074,7 +1074,7 @@ test("原文保存成功但列表刷新失败时仍确认保存并进入真实�
       body: JSON.stringify({ error: "列表暂时无法读取" }),
     }),
   );
-  await page.getByRole("button", { name: "开始梳理", exact: true }).click();
+  await page.getByRole("button", { name: "开始整理", exact: true }).click();
   await advancedPage(page);
   await expect(page.getByRole("group", { name: "思考阶段" })).toBeVisible();
   await expect(
@@ -1092,7 +1092,7 @@ test("登录和注册收到HTML或空响应时显示可读错误，版本在登�
 }) => {
   await page.goto("/");
   await expect(
-    page.getByText("界面版本：思考空间 · 2026.10.16-r5", { exact: false }),
+    page.getByText("界面版本：整理成果 · 2026.10.16-r6", { exact: false }),
   ).toBeVisible();
   await page
     .getByLabel("邮箱", { exact: true })

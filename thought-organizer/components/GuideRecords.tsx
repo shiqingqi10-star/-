@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { Entity, common, fields } from "@/lib/schema";
+import { OutlineEntry, outlineLabels } from "@/lib/outline-schema";
 import { GuideAnswer } from "@/lib/guidance-schema";
 import { api } from "@/lib/http";
 import { entityName, readableTime } from "@/lib/presentation";
@@ -17,6 +18,11 @@ function RunOutput({ value }: { value: string }) {
     closure?: { message?: string };
     candidates?: { text?: string }[];
     candidateWarnings?: { text?: string; reason?: string }[];
+    changes?: {
+      text: string;
+      reason: string;
+      category: keyof typeof outlineLabels;
+    }[];
   } | null = null;
   try {
     result = JSON.parse(value);
@@ -40,6 +46,13 @@ function RunOutput({ value }: { value: string }) {
       {result.closure?.message && (
         <p className="full-body">{result.closure.message}</p>
       )}
+      {result.changes?.map((c, i) => (
+        <p className="full-body" key={"change" + i}>
+          {outlineLabels[c.category]}：{c.text}
+          <br />
+          {c.reason}
+        </p>
+      ))}
       {result.candidates?.map((c, i) => (
         <p className="full-body" key={i}>
           待确认提炼：{c.text}
@@ -56,6 +69,7 @@ function RunOutput({ value }: { value: string }) {
 type Snapshot = {
   entities: Entity[];
   answers: GuideAnswer[];
+  outline?: OutlineEntry[];
   anchor?: {
     original?: string;
     corrections?: { text: string; review?: boolean }[];
@@ -105,6 +119,17 @@ function InputContents({ snapshot }: { snapshot: Snapshot }) {
           </dl>
         </details>
       ))}
+      {snapshot.outline?.length ? (
+        <details>
+          <summary>本次使用的整理草稿 · {snapshot.outline.length}条</summary>
+          {snapshot.outline.map((e) => (
+            <p className="full-body" key={e.id}>
+              {outlineLabels[e.category]}：{e.text}
+              {e.review ? "（来源需核对）" : ""}
+            </p>
+          ))}
+        </details>
+      ) : null}
       {snapshot.answers?.map((a, i) => (
         <details key={a.id}>
           <summary>
@@ -313,7 +338,7 @@ export default function GuideRecords({
           </p>
           {detail.stale && (
             <p className="notice">
-              原文、回答或相关材料已有变化。这份历史结果已过期，不能作为当前建议直接采纳。
+              原文、回答、整理草稿或相关材料已有变化。这份历史结果已过期，不能作为当前建议直接采纳。
             </p>
           )}
           {detail.state === "error" && (

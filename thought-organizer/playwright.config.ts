@@ -1,4 +1,11 @@
 import { defineConfig } from "@playwright/test";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+// Test-only database location for provider contract fixtures; never exposed by the app.
+process.env.PLAYWRIGHT_TEST_DB_META ||= join(
+  tmpdir(),
+  "thought-playwright-" + process.pid + ".json",
+);
 export default defineConfig({
   testDir: "tests/browser",
   workers: 1,

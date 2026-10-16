@@ -44,7 +44,7 @@ type Row = {
 };
 const hash = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
-function signature(e: Pick<Entity, "kind" | "topic" | "data">) {
+export function signature(e: Pick<Entity, "kind" | "topic" | "data">) {
   return hash({
     kind: e.kind,
     topic: e.topic,
@@ -153,6 +153,22 @@ export function guideScope(owner: string, root: string) {
 }
 function refreshStaleness(owner: string, s: GuideSession) {
   const root = rootEntity(owner, s.root);
+  for (const job of s.data.outline.jobs.filter(
+    (j) => j.state === "running" && j.id,
+  )) {
+    const call = one<{ state: string; error: string }>(
+      "SELECT state,error FROM calls WHERE id=? AND owner=?",
+      job.id!,
+      owner,
+    );
+    if (call?.state === "error") {
+      job.state = "error";
+      job.message =
+        call.error === "expired"
+          ? "上次整理已中断，可以重新发起。"
+          : call.error || "上次整理未完成。";
+    }
+  }
   if (s.data.rootSignature !== signature(root)) {
     s.data.candidates.forEach((c) => {
       if (c.status !== "ignored") c.stale = true;
@@ -166,14 +182,51 @@ function refreshStaleness(owner: string, s: GuideSession) {
     });
   }
   const current = guideScope(owner, s.root);
+  const changed = (
+    source: GuideData["outline"]["entries"][number]["sources"][number],
+  ) =>
+    source.kind === "entity"
+      ? !current.some(
+          (e) =>
+            e.id === source.id &&
+            (source.signature
+              ? signature(e) === source.signature
+              : e.contentVersion === source.version),
+        )
+      : source.kind === "answer"
+        ? !s.data.answers.some(
+            (a) =>
+              a.id === source.id && a.version === source.version && !a.review,
+          )
+        : !s.data.outline.entries.some(
+            (e) =>
+              e.id === source.id && e.version === source.version && !e.review,
+          );
+  s.data.outline.entries.forEach((e) => {
+    if (e.sources.some(changed)) e.review = true;
+  });
+  s.data.outline.changes.forEach((c) => {
+    if (
+      c.sources.some(changed) ||
+      (c.targetId &&
+        !s.data.outline.entries.some(
+          (e) => e.id === c.targetId && e.version === c.baseEntryVersion,
+        ))
+    )
+      c.review = true;
+  });
   for (const r of s.data.runs) {
     const snapshot = JSON.parse(r.snapshot) as {
       entities: { id: string; signature: string }[];
       answers: GuideData["answers"];
+      outline?: GuideData["outline"]["entries"];
     };
-    const confirmed = new Set(
-      s.data.candidates.filter((c) => c.target).map((c) => c.target),
-    );
+    const confirmed = new Set([
+      ...s.data.candidates.filter((c) => c.target).map((c) => c.target),
+      ...s.data.outline.entries
+        .filter((e) => e.targetId)
+        .map((e) => e.targetId),
+    ]);
     if (
       snapshot.answers.length !== s.data.answers.length ||
       snapshot.answers.some(
@@ -191,6 +244,24 @@ function refreshStaleness(owner: string, s: GuideSession) {
         (e) =>
           !snapshot.entities.some((x) => x.id === e.id) && !confirmed.has(e.id),
       )
+    )
+      r.stale = true;
+    if (
+      snapshot.outline &&
+      (snapshot.outline.some(
+        (saved) =>
+          !s.data.outline.entries.some(
+            (e) =>
+              e.id === saved.id &&
+              e.text === saved.text &&
+              e.category === saved.category,
+          ),
+      ) ||
+        s.data.outline.entries.some(
+          (e) =>
+            e.runId !== r.id &&
+            !snapshot.outline!.some((saved) => saved.id === e.id),
+        ))
     )
       r.stale = true;
     if (r.stale) {
@@ -277,6 +348,7 @@ export function startGuide(owner: string, input: unknown) {
       content: z.string().min(1).max(50000),
       token: z.string().uuid(),
       organize: z.boolean(),
+      initial: z.boolean().default(false),
     })
     .strict()
     .parse(input);
@@ -298,7 +370,11 @@ export function startGuide(owner: string, input: unknown) {
       },
       null,
     );
-    initializeGuide(owner, e.id, b.token);
+    const session = initializeGuide(owner, e.id, b.token);
+    if (b.initial && b.organize) {
+      session.data.outline.autoToken = b.token;
+      persistGuide(owner, session);
+    }
     return e;
   });
 }
