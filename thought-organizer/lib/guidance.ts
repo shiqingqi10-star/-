@@ -17,15 +17,24 @@ import {
   answerSchema,
   assessments,
   scenarioSchema,
+  responseSchema,
+  answerFormatSchema,
 } from "./guidance-schema";
 import {
   nextRule,
+  scenarioStep,
   markAgenda,
   chooseStrategy,
   strategyQuestion,
   ruleQuestion,
   reenterScenario,
 } from "./guidance-rules";
+import {
+  composeResponse,
+  validateResponse,
+  usableAnswerFormat,
+  guideAnchor,
+} from "./guide-experience";
 type Row = {
   id: string;
   root: string;
@@ -152,6 +161,9 @@ function refreshStaleness(owner: string, s: GuideSession) {
       r.stale = true;
     });
     if (s.data.current?.mode === "ai") s.data.current.review = true;
+    s.data.understandings.forEach((u) => {
+      u.review = true;
+    });
   }
   const current = guideScope(owner, s.root);
   for (const r of s.data.runs) {
@@ -193,8 +205,13 @@ function refreshStaleness(owner: string, s: GuideSession) {
   }
   return s;
 }
-export function getGuide(owner: string, root: string): GuideSession {
+export function getGuide(
+  owner: string,
+  root: string,
+  includeRequests = true,
+): GuideSession {
   const s = refreshStaleness(owner, rawSession(owner, root));
+  if (!includeRequests) return s;
   const requests = all<{
     id: string;
     snapshot: string;
@@ -288,10 +305,20 @@ export function startGuide(owner: string, input: unknown) {
 const commandSchema = z.discriminatedUnion("action", [
   z
     .object({
+      action: z.literal("correctUnderstanding"),
+      version: z.number().int().positive(),
+      key: z.string(),
+      text: z.string().min(1).max(5000),
+      answerIds: z.array(z.string()).max(100),
+    })
+    .strict(),
+  z
+    .object({
       action: z.literal("resume"),
       version: z.number().int().positive(),
       questionId: z.string(),
       draft: z.string().max(50000).optional(),
+      response: responseSchema.nullable().optional(),
     })
     .strict(),
   z
@@ -309,6 +336,7 @@ const commandSchema = z.discriminatedUnion("action", [
       version: z.number().int().positive(),
       scenario: scenarioSchema,
       draft: z.string().max(50000).optional(),
+      response: responseSchema.nullable().optional(),
     })
     .strict(),
   z
@@ -321,6 +349,7 @@ const commandSchema = z.discriminatedUnion("action", [
         .enum(["verify", "condition", "evidence", "update"])
         .default("condition"),
       draft: z.string().max(50000).optional(),
+      response: responseSchema.nullable().optional(),
     })
     .strict(),
   z
@@ -338,6 +367,7 @@ const commandSchema = z.discriminatedUnion("action", [
       text: z.string().max(50000),
       status: z.enum(["answered", "unknown", "skipped"]),
       assessment: z.enum(assessments).default("unspecified"),
+      response: responseSchema.nullable().optional(),
     })
     .strict(),
   z
@@ -348,6 +378,7 @@ const commandSchema = z.discriminatedUnion("action", [
       text: z.string().max(50000),
       status: z.enum(["answered", "unknown", "skipped"]),
       assessment: z.enum(assessments).default("unspecified"),
+      response: responseSchema.nullable().optional(),
     })
     .strict(),
   z
@@ -363,6 +394,7 @@ const commandSchema = z.discriminatedUnion("action", [
       version: z.number().int().positive(),
       direction: z.enum(directions),
       draft: z.string().max(50000).optional(),
+      response: responseSchema.nullable().optional(),
     })
     .strict(),
   z
@@ -370,12 +402,15 @@ const commandSchema = z.discriminatedUnion("action", [
       action: z.literal("pause"),
       version: z.number().int().positive(),
       draft: z.string().max(50000),
+      response: responseSchema.nullable().optional(),
     })
     .strict(),
   z
     .object({
       action: z.literal("basic"),
       version: z.number().int().positive(),
+      draft: z.string().max(50000).optional(),
+      response: responseSchema.nullable().optional(),
     })
     .strict(),
   z
@@ -407,6 +442,22 @@ const commandSchema = z.discriminatedUnion("action", [
 function nextBasic(s: GuideSession) {
   s.data.current = nextRule(s, randomUUID());
   s.data.draft = "";
+  s.data.draftResponse = null;
+  const last = s.data.answers.at(-1);
+  s.data.closure =
+    !s.data.current && last
+      ? {
+          message:
+            last.status === "unknown" || last.assessment === "external"
+              ? "还有信息需要确认，可以先看成果，等有新信息再继续。"
+              : "这一轮的记录已留下。你可以先看成果，再决定是否继续；这不代表已经作出决定。",
+          reason:
+            last.status === "unknown" || last.assessment === "external"
+              ? "external"
+              : "pause",
+          answerIds: [last.id],
+        }
+      : null;
 }
 function prepareBasic(s: GuideSession) {
   for (const d of directions) {
@@ -426,7 +477,9 @@ function prepareBasic(s: GuideSession) {
           : d === "basis" && a.assessment === "observed"
             ? "observed"
             : "statement";
-      groups.set(nature, [...(groups.get(nature) || []), a]);
+      const key =
+        nature + (a.question.itemKey.includes("context") ? ":context" : "");
+      groups.set(key, [...(groups.get(key) || []), a]);
     }
     const desired = [...groups].map(([nature, answers]) => ({
       nature,
@@ -439,12 +492,24 @@ function prepareBasic(s: GuideSession) {
           c.source === "basic" &&
           c.direction === d &&
           c.status === "pending" &&
+          !c.editedByUser &&
           !desired.some((x) => x.fingerprint === c.fingerprint),
       )
       .forEach((c) => {
         c.status = "ignored";
       });
     for (const { nature, answers, fingerprint } of desired) {
+      if (
+        s.data.candidates.some(
+          (c) =>
+            c.editedByUser &&
+            !c.stale &&
+            c.status !== "ignored" &&
+            c.direction === d &&
+            answers.every((a) => c.answerIds.includes(a.id)),
+        )
+      )
+        continue;
       if (
         s.data.candidates.some(
           (c) =>
@@ -474,12 +539,11 @@ function prepareBasic(s: GuideSession) {
               : d === "judgment"
                 ? "review"
                 : "card",
-        cardType:
-          nature === "observed"
-            ? "事实或观察"
-            : nature === "inferred"
-              ? "假设"
-              : "观点或推断",
+        cardType: nature.startsWith("observed")
+          ? "事实或观察"
+          : nature.startsWith("inferred")
+            ? "假设"
+            : "观点或推断",
         answerIds: answers.map((a) => a.id),
         source: "basic",
         answerSnapshots: structuredClone(answers),
@@ -488,6 +552,7 @@ function prepareBasic(s: GuideSession) {
         stale: false,
         fingerprint,
         runId: null,
+        editedByUser: false,
       });
     }
   }
@@ -496,6 +561,31 @@ export function mutateGuide(owner: string, root: string, input: unknown) {
   const b = commandSchema.parse(input);
   return transaction(() => {
     const s = getGuide(owner, root);
+    if ((b.action === "answer" || b.action === "editAnswer") && b.response) {
+      const q =
+        b.action === "answer"
+          ? s.data.current
+          : s.data.answers.find((a) => a.id === b.answerId)?.question;
+      if (!q) fail("对应问题不存在", 404);
+      const error = validateResponse(q, b.response);
+      if (error) fail(error, 409);
+      b.text = composeResponse(q, b.response);
+      if (b.text.length > 50000) fail("回答过长，请缩短补充说明。", 400);
+      if (
+        b.status === "answered" &&
+        b.response.selected.length === 1 &&
+        b.response.selected[0] === "other" &&
+        !b.response.detail.trim()
+      )
+        fail("请补充你的想法。", 400);
+      if (
+        b.status === "answered" &&
+        (q.input.kind === "unknown" ||
+          b.response.selected.includes("uncertain") ||
+          b.response.selected.includes("check"))
+      )
+        b.status = "unknown";
+    }
     // Retried answer/confirmation requests return the already committed result.
     if (
       b.action === "answer" &&
@@ -523,19 +613,24 @@ export function mutateGuide(owner: string, root: string, input: unknown) {
       s.data.current
     ) {
       const draft = "draft" in b ? (b.draft ?? s.data.draft) : s.data.draft;
-      if (draft.trim()) {
+      const response = "response" in b ? b.response : s.data.draftResponse;
+      if (draft.trim() || response?.selected.length) {
         const old = s.data.parked.find(
           (p) => p.question.id === s.data.current!.id,
         );
-        if (old) old.draft = draft;
-        else
+        if (old) {
+          old.draft = draft;
+          old.response = response || null;
+        } else
           s.data.parked.push({
             question: s.data.current,
             draft,
+            response: response || null,
             pausedAt: new Date().toISOString(),
           });
       }
       s.data.draft = "";
+      s.data.draftResponse = null;
     }
     if (b.action === "answer") {
       if (!s.data.current || s.data.current.id !== b.questionId)
@@ -552,6 +647,7 @@ export function mutateGuide(owner: string, root: string, input: unknown) {
           text: b.text,
           status: b.status,
           assessment: b.assessment,
+          response: b.response || null,
           version: 1,
           review: false,
           createdAt: now,
@@ -572,6 +668,8 @@ export function mutateGuide(owner: string, root: string, input: unknown) {
         a.status !== b.status ||
         a.assessment !== b.assessment
       ) {
+        if (b.response !== undefined) a.response = b.response;
+        else if (a.text !== b.text) a.response = null;
         a.text = b.text;
         a.status = b.status;
         a.assessment = b.assessment;
@@ -582,6 +680,12 @@ export function mutateGuide(owner: string, root: string, input: unknown) {
         s.data.answers.slice(i + 1).forEach((x) => {
           x.review = true;
         });
+        const affected = new Set(s.data.answers.slice(i).map((x) => x.id));
+        s.data.understandings
+          .filter((u) => u.answerIds.some((id) => affected.has(id)))
+          .forEach((u) => {
+            u.review = true;
+          });
         s.data.candidates
           .filter((c) => c.status !== "ignored")
           .forEach((c) => {
@@ -600,6 +704,73 @@ export function mutateGuide(owner: string, root: string, input: unknown) {
             j.needsReview = true;
         });
       }
+    } else if (b.action === "correctUnderstanding") {
+      const ids = [...new Set(b.answerIds)];
+      const sources = ids.map((id) => s.data.answers.find((a) => a.id === id));
+      if (sources.some((a) => !a || a.review || a.status === "skipped"))
+        fail("来源回答需要先核对，输入保留。", 409);
+      const old = s.data.understandings.find((u) => u.key === b.key);
+      if (
+        old &&
+        !old.review &&
+        old.text === b.text &&
+        JSON.stringify(old.answerIds) === JSON.stringify(ids)
+      )
+        return s;
+      const correction = {
+        key: b.key,
+        text: b.text,
+        review: false,
+        answerIds: ids,
+        updatedAt: new Date().toISOString(),
+      };
+      if (old) Object.assign(old, correction);
+      else s.data.understandings.push(correction);
+      let candidate = s.data.candidates.find(
+        (c) => c.id === b.key && !c.target && c.status !== "ignored",
+      );
+      if (candidate) {
+        candidate.text = b.text;
+        candidate.editedByUser = true;
+        candidate.stale = false;
+      } else if (sources.length) {
+        candidate = candidateSchema.parse({
+          id: randomUUID(),
+          direction:
+            sources[0]!.status === "unknown"
+              ? "unknown"
+              : sources[0]!.question.direction,
+          text: b.text,
+          kind: sources[0]!.status === "unknown" ? "question" : "card",
+          cardType: "观点或推断",
+          answerIds: ids,
+          source: "basic",
+          answerSnapshots: sources,
+          status: "pending",
+          target: null,
+          stale: false,
+          fingerprint: hash({ correction: b.key }),
+          runId: null,
+          editedByUser: true,
+        });
+        s.data.candidates.push(candidate);
+      }
+      s.data.runs.forEach((r) => (r.stale = true));
+      s.data.candidates
+        .filter(
+          (c) =>
+            c.id !== candidate?.id &&
+            c.answerIds.some((id) => ids.includes(id)),
+        )
+        .forEach((c) => (c.stale = true));
+      s.data.judgments
+        .filter((j) => j.answerIds.some((id) => ids.includes(id)))
+        .forEach((j) => (j.needsReview = true));
+      if (s.data.current?.mode === "ai") {
+        s.data.current.review = true;
+        if (b.key === "understanding:" + s.data.current.id)
+          s.data.current.understanding = b.text;
+      }
     } else if (b.action === "acknowledge") {
       const a = s.data.answers.find((a) => a.id === b.answerId);
       if (!a) fail("回答不存在", 404);
@@ -609,6 +780,7 @@ export function mutateGuide(owner: string, root: string, input: unknown) {
       if (!parked) fail("暂存的问题不存在", 404);
       s.data.current = parked.question;
       s.data.draft = parked.draft;
+      s.data.draftResponse = parked.response;
       s.data.parked = s.data.parked.filter((p) => p !== parked);
     } else if (b.action === "reframe") {
       if (!s.data.current) fail("请先选择一个想继续梳理的方向。");
@@ -686,21 +858,32 @@ export function mutateGuide(owner: string, root: string, input: unknown) {
       s.data.mode = "basic";
       if (s.data.current) {
         const q = s.data.current;
+        const step = scenarioStep(s.data.scenario, q.itemKey);
         s.data.current = ruleQuestion(
           {
             key: q.itemKey || q.direction,
             direction: q.direction,
             focus: q.purpose || presets[q.direction].text,
-            text: presets[q.direction].text,
+            text: step?.text || presets[q.direction].text,
+            input: step?.input,
           },
           randomUUID(),
           q.sourceAnswerIds,
           q.targetId,
         );
+        const reply = b.response || s.data.draftResponse;
+        if (reply) {
+          const next = s.data.current;
+          s.data.draftResponse = validateResponse(next, reply)
+            ? { selected: [], detail: composeResponse(q, reply) }
+            : reply;
+          s.data.draft = s.data.draftResponse.detail;
+        } else if (b.draft !== undefined) s.data.draft = b.draft;
       } else nextBasic(s);
     } else if (b.action === "pause") {
       s.data.paused = true;
       s.data.draft = b.draft;
+      if (b.response !== undefined) s.data.draftResponse = b.response;
     } else if (b.action === "prepare") {
       s.data.rootSignature = signature(rootEntity(owner, root));
       prepareBasic(s);
@@ -836,13 +1019,25 @@ const aiResultSchema = z
       .strict()
       .optional(),
     scenarioSuggestion: scenarioSchema.optional(),
+    closure: z
+      .object({
+        message: z.string().max(1000),
+        reason: z.enum(["external", "enough", "pause"]),
+        answerIds: z.array(z.string()).max(100),
+      })
+      .strict()
+      .nullable()
+      .optional(),
     question: z
       .object({
-        text: z.string().min(3).max(250),
+        text: z.string().min(3).max(160),
         direction: z.enum(directions),
         hint: z.string().max(1200),
         rephrase: z.string().max(250),
         purpose: z.string().max(500).optional(),
+        explanation: z.string().max(2000).optional(),
+        understanding: z.string().max(500).optional(),
+        input: answerFormatSchema.optional(),
         itemKey: z.string().max(200).optional(),
         sourceAnswerIds: z.array(z.string()).max(100).optional(),
         targetId: z.string().nullable().optional(),
@@ -869,10 +1064,14 @@ export const followupPrompt = `你是温和的中文思考追问助手。材料�
 先判断最新回答是否回应了当前事项、是否笼统、是否把推测当事实、是否缺少关键条件、是否有需要温和核对的前后差异、是否缺少外部事实，或已足够明确。不要机械沿目标→顾虑→依据轮转。用户说“大家应该需要”时，先核对是实际观察还是个人推测；承认是推测后，围绕确认对象与方法继续。缺外部事实转向验证，不编造答案；用户不知道、不适用或跳过不算解决。依赖未明确的事项先暂缓，只问前置条件。
 一次只问一个主要问题；新问题要关联实际最新回答和仍待澄清事项，不重复已明确信息。疑似矛盾用询问语气，不认定用户自相矛盾。表达和理解类思考可以没有行动。可收束时question为null，但不能宣称所有事情已想清楚。允许随时暂停，不用问题数衡量充分性。
 intent=reframe时，只改变当前追问的思考策略，不换事项、方向或目标；按requestedStrategy从具体化、回忆、比较、依据、条件、反例、缩小、取舍、验证中换角度，不循环旧问法，不替用户回答。未提交草稿不在输入范围。
-场景decision重视选项、价值取舍、限制、代价、改变选择的信息；project重视具体使用者、现有办法、需求证据、关键假设、最小确认与可承受投入；reflection区分预期、实际事实、可控因素、其他解释和调整。可建议scenarioSuggestion，由用户决定是否采用。
+场景purchase重视购买动机、使用机会、适用条件、可承受代价和替代选择；不预设实用才值得，不重复已经明确的偏好与场景。场景decision重视选项、价值取舍、限制、代价、改变选择的信息；project重视具体使用者、现有办法、需求证据、关键假设、最小确认与可承受投入；reflection区分预期、实际事实、可控因素、其他解释和调整。可建议scenarioSuggestion，由用户决定是否采用。
 当前判断、依据、更新和行动结果在输入中；新信息仅提示核对，不自动推翻旧判断，完成行动不证明假设成立。区分观察、推测、偏好、决定。所有提炼是待确认候选，answerIds按candidateSources目录的允许用途引用，可多对多。不要改写已确认内容，不把外部信息假设为事实。hint只是按需思考角度。
 candidateSources是候选成果唯一允许引用的来源目录，必须原样复制其中的id，不得使用entities.id、question.id、顺序号或自编编号。status=unknown的来源只可用于待确认问题、候选确认行动或问题卡片，不能据此编造观点、判断或事实。skipped与需复核的回答不在目录中。没有适合的合法来源时返回candidates=[]，仍然正常返回下一问；原文用于理解背景，不能冒充已经回答的内容。
-只返回JSON：{"assessment":{"answerId":"最新已保存回答编号，没有回答时为空字符串","status":"clear|unclear|external|inferred|difference|sufficient","reason":"判断理由，允许用户纠正"},"scenarioSuggestion":"general|decision|project|reflection","question":{"text":"一个主要问题？","direction":"goal|concern|basis|unknown|judgment|next","purpose":"本轮要澄清什么","itemKey":"当前agenda事项键或新事项键","sourceAnswerIds":["实际相关回答编号，next必须关联最新回答"],"targetId":null,"prerequisites":[],"hint":"按需角度","rephrase":"同一目的的简短表达"},"candidates":[{"direction":"judgment","text":"待确认内容","kind":"card|question|task|review","cardType":"事实或观察|假设|观点或推断|问题|结论|备选方案","answerIds":["输入回答编号"]}]}。question可为null。`;
+每轮都先回到anchor.original与anchor.goals（包括用户修正），用已有线索、未知与当前判断决定怎样推进原问题；不能只接上一句话无限细问。想获得的体验与想到的场景已表达后，应确认真实机会、条件、适用性、代价或替代选择，不持续让用户想象细节。尊重审美、快乐及偏好，不预设实用才值得，不把个人偏好当已核实事实。缺外部信息时停止让用户凭空回答。anchor.corrections是用户明确修正的理解，后续优先参考，不擅自改写原话。
+主问尽量一句、约15到45字；必要条件不能省去。解释放question.explanation，说明这一问怎样帮助原问题。question.understanding可为空，仅必要时一两句试探且可纠正的理解，不每轮复述，不空泛表扬，不断言心理动机。
+question.input可选：{kind:"text|single|multiple|compare|unknown",options:[{id:"稳定短编号",label:"中性选项"}]}。原因经历感受用text；明确安排可single；多个关注因素可multiple；实际选项比较可compare；信息缺口可unknown。选项必须与当前问题对应，互斥或可多选的关系清楚，不写推荐答案、不预选用户立场。保留自由表达；系统会补充“不确定”“其他”。不清楚如何提供有效选项就用text。compare必须是输入已提到的选项或原问题实际存在的行动选择，不编造新的商品或替用户决定。
+当已有阶段线索、缺外部事实或进一步追问收益较小时，可返回closure:{message:"简短阶段说明，不声称已经解决",reason:"external|enough|pause",answerIds:["实际来源"]}，question可为空；让用户选择继续确认或先看成果，不强制行动、不按问题数量判定完成。
+只返回JSON：{"assessment":{"answerId":"最新已保存回答编号，没有回答时为空字符串","status":"clear|unclear|external|inferred|difference|sufficient","reason":"判断理由，允许用户纠正"},"scenarioSuggestion":"general|decision|project|reflection|purchase","question":{"text":"一个主要问题？","direction":"goal|concern|basis|unknown|judgment|next","purpose":"本轮要澄清什么","itemKey":"当前agenda事项键或新事项键","sourceAnswerIds":["实际相关回答编号，next必须关联最新回答"],"targetId":null,"prerequisites":[],"hint":"按需角度","rephrase":"同一目的的简短表达"},"candidates":[{"direction":"judgment","text":"待确认内容","kind":"card|question|task|review","cardType":"事实或观察|假设|观点或推断|问题|结论|备选方案","answerIds":["输入回答编号"]}]}。question可为null。`;
 export async function generateGuide(
   owner: string,
   root: string,
@@ -912,6 +1111,7 @@ export async function generateGuide(
       requestedStrategy: strategy,
       reason: b.reason,
       scenario: s.data.scenario,
+      anchor: guideAnchor(rootEntity(owner, root), s, entities),
       agenda: s.data.agenda,
       current: s.data.current,
       judgments: s.data.judgments,
@@ -1000,6 +1200,15 @@ export async function generateGuide(
       )
         fail("AI把推测、偏好或选择写成了事实，请重新核对。", 502);
     }
+    if (
+      output.closure?.answerIds.some(
+        (id) =>
+          !s.data.answers.some(
+            (a) => a.id === id && !a.review && a.status !== "skipped",
+          ),
+      )
+    )
+      fail("阶段小结引用的来源需要核对，请重试。", 502);
     const latestAnswer = s.data.answers.at(-1);
     if (
       output.assessment?.answerId &&
@@ -1069,12 +1278,28 @@ export async function generateGuide(
         latest.data.paused = false;
         latest.data.rootSignature = signature(rootEntity(owner, root));
         const previousQuestion = latest.data.current;
+        latest.data.closure =
+          output.closure ||
+          (!output.question
+            ? {
+                message:
+                  "这一轮没有新的追问。可以先看已有成果，再决定是否继续。",
+                reason: "pause",
+                answerIds: latestAnswer ? [latestAnswer.id] : [],
+              }
+            : null);
         latest.data.current = output.question
           ? questionSchema.parse({
               ...output.question,
               id: b.intent === "reframe" ? previousQuestion!.id : randomUUID(),
               mode: "ai",
               review: false,
+              input:
+                b.intent === "reframe"
+                  ? previousQuestion!.input
+                  : usableAnswerFormat(
+                      output.question.input || { kind: "text", options: [] },
+                    ),
               itemKey:
                 b.intent === "reframe"
                   ? previousQuestion!.itemKey
@@ -1145,6 +1370,7 @@ export async function generateGuide(
           )
             continue;
           latest.data.candidates.push({
+            editedByUser: false,
             ...c,
             id: randomUUID(),
             answerIds: [...new Set(c.answerIds)],

@@ -808,6 +808,7 @@ pre {
   font-size: 12px;
 }
 .modal {
+  margin: auto;
   border: 0;
   padding: 0;
   background: transparent;
@@ -1979,4 +1980,224 @@ pre {
     flex-direction: column;
     align-items: flex-start;
   }
+}
+
+/* r5: one question, a compact answer, and a few traceable clues. */
+.focused-space .guided-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
+  gap: 28px;
+}
+.focused-space .current-question {
+  padding: 24px;
+}
+.focused-space .current-question h2 {
+  font-size: 22px;
+  line-height: 1.6;
+  margin: 22px 0 12px;
+}
+.focused-space .answer-label textarea {
+  min-height: 108px;
+  font-size: 15px;
+  line-height: 1.8;
+}
+.thinking-name {
+  min-width: 0;
+  max-width: 65%;
+  overflow-wrap: anywhere;
+  text-align: left;
+  font-weight: 600;
+}
+.question-why {
+  color: var(--secondary);
+  font-size: 13px;
+  margin-bottom: 20px;
+}
+.question-why p {
+  line-height: 1.8;
+}
+.brief-understanding {
+  font-size: 14px;
+  color: var(--secondary);
+  margin-top: 16px;
+}
+.brief-understanding p {
+  margin: 0;
+}
+.question-help-panel {
+  margin-top: 20px;
+  color: var(--secondary);
+  font-size: 14px;
+}
+.answer-options {
+  border: 0;
+  padding: 0;
+  margin: 0 0 16px;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.answer-options legend {
+  font-size: 13px;
+  color: var(--secondary);
+  margin-bottom: 10px;
+}
+.answer-option {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 14px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.answer-option:has(input:checked) {
+  background: var(--selected);
+  border-color: var(--accent);
+}
+.answer-option:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.answer-option input {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+}
+.compare-options {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.guide-clues {
+  min-width: 0;
+  padding: 8px 0;
+}
+.guide-clues h2 {
+  font-size: 16px;
+  margin: 0 0 20px;
+}
+.guide-clues article {
+  padding: 0 0 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.clue-label {
+  font-size: 13px;
+  color: var(--secondary);
+  margin-bottom: 6px;
+}
+.clue-content {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 0;
+  line-height: 1.8;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+.guide-clues small {
+  display: block;
+  font-size: 12px;
+  margin-top: 6px;
+}
+.guide-clues .bar {
+  gap: 8px;
+  margin-top: 6px;
+}
+.guide-clues .text-button {
+  font-size: 13px;
+}
+.stage-closure,
+.resume-thinking {
+  margin-top: 20px;
+  font-size: 14px;
+  line-height: 1.8;
+}
+.expanded-guide-results {
+  margin-top: 32px;
+}
+.expanded-guide-results .guided-results {
+  position: static;
+  max-width: 850px;
+}
+.history-navigation {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+.history-navigation select {
+  min-width: 0;
+  flex: 1;
+  max-width: 100%;
+}
+.run-record-row {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  text-align: left;
+  margin: 8px 0;
+  padding: 16px;
+}
+.guide-records .full-body,
+.guide-history .full-body {
+  line-height: 1.8;
+}
+@media (max-width: 900px) {
+  .focused-space .guided-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+  .guide-clues {
+    border-top: 1px solid var(--border);
+    padding-top: 24px;
+  }
+  .guide-clues article {
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+  }
+}
+@media (max-width: 600px) {
+  .focused-space .current-question {
+    padding: 18px;
+  }
+  .focused-space .current-question h2 {
+    font-size: 20px;
+  }
+  .focused-space .guided-heading {
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  .thinking-name {
+    max-width: 100%;
+    flex-basis: 100%;
+  }
+  .compare-options {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .focused-space .question-caption {
+    align-items: flex-start;
+  }
+  .focused-space .question-caption .bar {
+    gap: 8px;
+  }
+}
+
+.thinking-name,
+.clue-content,
+.run-record-row {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.answer-option > span {
+  margin-bottom: 0;
 }

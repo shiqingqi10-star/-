@@ -81,7 +81,32 @@ export const scenarioSchema = z.enum([
   "decision",
   "project",
   "reflection",
+  "purchase",
 ]);
+export const answerFormatSchema = z
+  .object({
+    kind: z
+      .enum(["text", "single", "multiple", "compare", "unknown"])
+      .default("text"),
+    options: z
+      .array(
+        z
+          .object({
+            id: z.string().min(1).max(80),
+            label: z.string().min(1).max(100),
+          })
+          .strict(),
+      )
+      .max(8)
+      .default([]),
+  })
+  .strict();
+export const responseSchema = z
+  .object({
+    selected: z.array(z.string().max(80)).max(8).default([]),
+    detail: z.string().max(50000).default(""),
+  })
+  .strict();
 const strategyUse = z
   .object({
     strategy: z.enum(strategies),
@@ -99,6 +124,9 @@ export const questionSchema = z
     hint: z.string().max(2000),
     rephrase: z.string().max(500),
     review: z.boolean(),
+    explanation: z.string().max(2000).default(""),
+    understanding: z.string().max(500).default(""),
+    input: answerFormatSchema.default({ kind: "text", options: [] }),
     itemKey: z.string().max(200).default(""),
     purpose: z.string().max(500).default(""),
     sourceAnswerIds: z.array(z.string()).max(100).default([]),
@@ -114,6 +142,7 @@ export const answerSchema = z
     text: z.string().max(50000),
     status: z.enum(["answered", "unknown", "skipped"]),
     assessment: z.enum(assessments).default("unspecified"),
+    response: responseSchema.nullable().default(null),
     version: z.number().int().positive(),
     review: z.boolean(),
     createdAt: z.string(),
@@ -142,6 +171,7 @@ export const candidateSchema = z
     stale: z.boolean(),
     fingerprint: z.string(),
     runId: z.string().nullable(),
+    editedByUser: z.boolean().default(false),
   })
   .strict();
 export const judgmentMetaSchema = z
@@ -201,6 +231,30 @@ export const guideSchema = z
     mode: z.enum(["basic", "ai"]),
     paused: z.boolean(),
     draft: z.string().max(50000),
+    draftResponse: responseSchema.nullable().default(null),
+    closure: z
+      .object({
+        message: z.string().max(1000),
+        reason: z.enum(["external", "enough", "pause"]),
+        answerIds: z.array(z.string()).max(100),
+      })
+      .strict()
+      .nullable()
+      .default(null),
+    understandings: z
+      .array(
+        z
+          .object({
+            key: z.string(),
+            text: z.string().max(5000),
+            answerIds: z.array(z.string()).max(100),
+            updatedAt: z.string(),
+            review: z.boolean().default(false),
+          })
+          .strict(),
+      )
+      .max(300)
+      .default([]),
     runs: z
       .array(
         z
@@ -222,6 +276,7 @@ export const guideSchema = z
           .object({
             question: questionSchema,
             draft: z.string().max(50000),
+            response: responseSchema.nullable().default(null),
             pausedAt: z.string(),
           })
           .strict(),
@@ -265,6 +320,7 @@ export type GuideSession = {
   version: number;
   data: GuideData;
   updatedAt: string;
+  lastRequest?: { state: string; createdAt: string; message: string };
   requests?: {
     id: string;
     snapshot: string;

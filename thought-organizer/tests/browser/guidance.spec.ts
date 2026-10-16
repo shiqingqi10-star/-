@@ -29,9 +29,230 @@ async function start(page: Page) {
     page.getByRole("heading", { name: "你最希望得到什么？", exact: true }),
   ).toBeVisible();
 }
+async function focusedCoverage(page: Page) {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole("button", { name: "返回我的思考", exact: true }).click();
+  if (
+    await page
+      .getByRole("button", { name: "返回记录入口", exact: true })
+      .isVisible()
+  )
+    await page
+      .getByRole("button", { name: "返回记录入口", exact: true })
+      .click();
+  await page
+    .getByLabel("写下想法", { exact: true })
+    .fill("我在思考今天买不买这件衣服。");
+  await page.getByRole("button", { name: "开始梳理", exact: true }).click();
+  await expect(page.locator(".current-question h2")).toHaveText(
+    "你最希望得到什么？",
+  );
+  const selectScene = async (label: string) => {
+    await page
+      .getByRole("button", { name: "更多操作：梳理", exact: true })
+      .click();
+    await page.getByRole("menuitem", { name: "调整引导", exact: true }).click();
+    await page.getByText("换一个适合这件事的引导", { exact: true }).click();
+    await page.getByRole("button", { name: label, exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: label, exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await page.keyboard.press("Escape");
+  };
+  await selectScene("考虑一次购买");
+  await respond(page, "想更亮眼、更快乐。");
+  await respond(page, "我想到的场景是舞会。");
+  await expect(page.locator(".current-question h2")).toHaveText(
+    "近期有确定的使用机会吗？",
+  );
+  await expect(page.locator(".answer-options input:checked")).toHaveCount(0);
+  await expect(page.getByLabel("目前的线索")).toContainText("想更亮眼、更快乐");
+  await expect(page.getByLabel("目前的线索")).toContainText("舞会");
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({
+    path: "data/r5-current-desktop.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBeTruthy();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: "data/r5-current-mobile.png", fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await expect(page.getByText("已保存的AI输入", { exact: true })).toHaveCount(
+    0,
+  );
+  const all = await (await page.request.get("/api/entities")).json();
+  const root = all.find(
+    (e: { data: { content?: string } }) =>
+      e.data.content === "我在思考今天买不买这件衣服。",
+  );
+  const before = await (
+    await page.request.get("/api/guidance/" + root.id)
+  ).json();
+  let aiCalls = 0;
+  const watch = (req: { url(): string; method(): string }) => {
+    if (req.url().includes("/ai") && req.method() === "POST") aiCalls++;
+  };
+  page.on("request", watch);
+  await page.getByRole("button", { name: "使用范围", exact: true }).click();
+  await expect(
+    page.getByRole("dialog", { name: "使用范围", exact: true }),
+  ).toContainText("尚未因打开此处而发送");
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("button", { name: "使用范围", exact: true }),
+  ).toBeFocused();
+  await page
+    .getByRole("button", { name: "更多操作：梳理", exact: true })
+    .click();
+  await page.getByRole("menuitem", { name: "AI运行记录", exact: true }).click();
+  await expect(
+    page.getByRole("dialog", { name: "AI运行记录", exact: true }),
+  ).toContainText("还没有AI运行记录");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "前面的回答", exact: true }).click();
+  await page.getByLabel("定位回答轮次").selectOption("1");
+  await expect(
+    page.getByRole("dialog", { name: "前面的回答", exact: true }),
+  ).toContainText("舞会");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "查看成果", exact: true }).click();
+  expect(
+    (await (await page.request.get("/api/guidance/" + root.id)).json()).version,
+  ).toBe(before.version);
+  expect(aiCalls).toBe(0);
+  page.off("request", watch);
+  await page.getByLabel("有，已经有明确安排", { exact: true }).check();
+  await page
+    .getByLabel("你的回答", { exact: true })
+    .fill("下周六有舞会，时长还没核对");
+  await page.getByRole("button", { name: "先到这里", exact: true }).click();
+  await expect(page.locator(".guided-heading")).toContainText("草稿已保存");
+  await page.reload();
+  await expect(
+    page.getByLabel("有，已经有明确安排", { exact: true }),
+  ).toBeChecked();
+  await expect(page.getByLabel("你的回答", { exact: true })).toHaveValue(
+    "下周六有舞会，时长还没核对",
+  );
+  await page.getByText("想不出来？", { exact: true }).click();
+  await page.getByRole("button", { name: "换个问法", exact: true }).click();
+  await expect(
+    page.getByLabel("有，已经有明确安排", { exact: true }),
+  ).toBeChecked();
+  await expect(page.getByLabel("你的回答", { exact: true })).toHaveValue(
+    "下周六有舞会，时长还没核对",
+  );
+  await page.getByRole("button", { name: "继续", exact: true }).click();
+  await expect(page.locator(".current-question h2")).toHaveText(
+    "它符合那次使用的需要吗？",
+  );
+  await expect(page.locator(".answer-options input:checked")).toHaveCount(0);
+  await page.getByLabel("已有信息表明适合", { exact: true }).check();
+  await page.getByRole("button", { name: "继续", exact: true }).click();
+  await expect(page.locator(".current-question h2")).toHaveText(
+    "这次支出在你愿意承担的范围内吗？",
+  );
+  await page.getByLabel("在我愿意承担的范围内", { exact: true }).check();
+  await page.getByRole("button", { name: "继续", exact: true }).click();
+  await expect(page.locator(".compare-options")).toBeVisible();
+  await page.getByLabel("暂缓决定", { exact: true }).check();
+  await page.getByLabel("你的回答", { exact: true }).fill("先了解价格再决定");
+  await page.getByRole("button", { name: "继续", exact: true }).click();
+  await expect(page.locator(".stage-closure")).toBeVisible();
+  await page.getByRole("button", { name: "查看成果", exact: true }).click();
+  await expect(page.locator(".expanded-guide-results")).toContainText(
+    "先了解价格再决定",
+  );
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({
+    path: "data/r5-results-desktop.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBeTruthy();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: "data/r5-results-mobile.png", fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page
+    .getByLabel("目前的线索")
+    .getByRole("button", { name: "修改理解", exact: true })
+    .first()
+    .click();
+  const correction = page.getByRole("dialog", {
+    name: "修改理解",
+    exact: true,
+  });
+  await correction
+    .getByLabel("修改理解内容")
+    .fill("更重视自己穿着开心，而不是别人的目光");
+  await correction
+    .getByRole("button", { name: "保存理解", exact: true })
+    .click();
+  await expect(correction).toHaveCount(0);
+  await expect(page.getByLabel("目前的线索")).toContainText("自己穿着开心");
+  const final = await (
+    await page.request.get("/api/guidance/" + root.id)
+  ).json();
+  expect(final.data.answers[0].text).toBe("想更亮眼、更快乐。");
+  expect(final.data.answers[2].response).toEqual({
+    selected: ["yes"],
+    detail: "下周六有舞会，时长还没核对",
+  });
+  await page.getByRole("button", { name: "返回我的思考", exact: true }).click();
+  if (
+    await page
+      .getByRole("button", { name: "返回记录入口", exact: true })
+      .isVisible()
+  )
+    await page
+      .getByRole("button", { name: "返回记录入口", exact: true })
+      .click();
+  await page
+    .getByLabel("写下想法", { exact: true })
+    .fill("周末参加活动还是休息？");
+  await page.getByRole("button", { name: "开始梳理", exact: true }).click();
+  await expect(page.locator(".current-question h2")).toHaveText(
+    "你最希望得到什么？",
+  );
+  await selectScene("在几个选项间决定");
+  await respond(page, "参加活动或在家休息");
+  await expect(
+    page.locator(".answer-options input[type=checkbox]"),
+  ).toHaveCount(6);
+  await page.getByLabel("时间与精力", { exact: true }).check();
+  await page.getByLabel("体验与个人偏好", { exact: true }).check();
+  await page.getByLabel("你的回答", { exact: true }).fill("也想留一点安静时间");
+  await page.getByRole("button", { name: "先到这里", exact: true }).click();
+  await page.reload();
+  await expect(page.getByLabel("时间与精力", { exact: true })).toBeChecked();
+  await expect(
+    page.getByLabel("体验与个人偏好", { exact: true }),
+  ).toBeChecked();
+  await expect(page.getByLabel("你的回答", { exact: true })).toHaveValue(
+    "也想留一点安静时间",
+  );
+  await page.getByRole("button", { name: "继续", exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBeTruthy();
+}
+
 test("两页真实核心场景、候选预览确认、暂停恢复和改答核对，桌面与手机截图", async ({
   page,
 }) => {
+  test.setTimeout(60000);
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await signup(page);
@@ -66,6 +287,7 @@ test("两页真实核心场景、候选预览确认、暂停恢复和改答核�
   await expect(
     page.getByRole("heading", { name: "什么信息让你产生这个判断？" }),
   ).toBeVisible();
+  await page.getByText("想不出来？", { exact: true }).click();
   await page.getByRole("button", { name: "跳过", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "哪个信息弄清楚后，你会更容易决定？" }),
@@ -99,7 +321,7 @@ test("两页真实核心场景、候选预览确认、暂停恢复和改答核�
   expect(entities).toHaveLength(1);
   expect(entities[0].data.content).toBe(sample);
   await page
-    .getByRole("button", { name: "看看目前理清了什么", exact: true })
+    .getByRole("button", { name: "查看成果", exact: true })
     .first()
     .click();
   await expect(page.locator(".guided-results")).toContainText(
@@ -152,10 +374,9 @@ test("两页真实核心场景、候选预览确认、暂停恢复和改答核�
     path: "data/guidance-r3-results-mobile.png",
     fullPage: true,
   });
-  await page.getByText("前面的回答 · 5 条", { exact: true }).click();
+  await page.getByRole("button", { name: "前面的回答", exact: true }).click();
   await page
-    .locator(".answer-history article")
-    .first()
+    .getByRole("dialog", { name: "前面的回答", exact: true })
     .getByRole("button", { name: "修改回答", exact: true })
     .click();
   const edit = page.getByRole("dialog", { name: "修改前面的回答" });
@@ -164,7 +385,12 @@ test("两页真实核心场景、候选预览确认、暂停恢复和改答核�
     .fill("优先认识同行，而不是尽量多认识人");
   await edit.getByRole("button", { name: "保存修改", exact: true }).click();
   await expect(edit).toHaveCount(0);
-  await expect(page.locator(".answer-history")).toContainText("请核对这一条");
+  await page.getByRole("button", { name: "前面的回答", exact: true }).click();
+  await page.getByLabel("定位回答轮次").selectOption("1");
+  await expect(
+    page.getByRole("dialog", { name: "前面的回答", exact: true }),
+  ).toContainText("需要核对");
+  await page.keyboard.press("Escape");
   await expect(page.locator(".guided-results")).toContainText(
     "原判断保留，没有自动改写",
   );
@@ -181,15 +407,13 @@ test("两页真实核心场景、候选预览确认、暂停恢复和改答核�
   await expect(
     page.getByRole("heading", { name: "梳理这个问题", exact: true }),
   ).toBeVisible();
-  await expect(page.locator(".guided-results > details")).not.toHaveAttribute(
-    "open",
-    "",
-  );
+  await expect(page.locator(".expanded-guide-results")).toHaveCount(0);
   await page
-    .getByRole("button", { name: "看看目前理清了什么", exact: true })
+    .getByRole("button", { name: "查看成果", exact: true })
     .first()
     .click();
   await expect(page.locator(".guided-results")).toContainText("优先认识同行");
+  await focusedCoverage(page);
   expect(errors).toEqual([]);
 });
 test("重复点击和失败重试不会重复创建，HTML错误保留草稿，手机当前问题不溢出", async ({
@@ -229,7 +453,7 @@ test("重复点击和失败重试不会重复创建，HTML错误保留草稿，�
   );
   const root = (await (await page.request.get("/api/entities")).json())[0];
   await page.getByLabel("你的回答", { exact: true }).fill("希望有更清楚的选择");
-  await page.route(`**/api/guidance/${root.id}`, async (route) => {
+  await page.route(`**/api/guidance/${root.id}?compact=1`, async (route) => {
     if (route.request().method() === "PATCH")
       await route.fulfill({ status: 500, body: "" });
     else await route.continue();
@@ -245,11 +469,12 @@ test("重复点击和失败重试不会重复创建，HTML错误保留草稿，�
   await expect(page.getByLabel("你的回答", { exact: true })).toHaveValue(
     "希望有更清楚的选择",
   );
-  await page.unroute(`**/api/guidance/${root.id}`);
+  await page.unroute(`**/api/guidance/${root.id}?compact=1`);
   await page.getByRole("button", { name: "继续", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "最让你犹豫的具体是什么？" }),
   ).toBeVisible();
+  await page.getByText("想不出来？", { exact: true }).click();
   await page.getByRole("button", { name: "给我一点提示", exact: true }).click();
   await expect(page.locator(".question-hint")).toContainText("预设思考角度");
   await page.getByRole("button", { name: "换个问法", exact: true }).click();
@@ -262,10 +487,7 @@ test("重复点击和失败重试不会重复创建，HTML错误保留草稿，�
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBeTruthy();
-  await expect(page.locator(".guided-results > details")).not.toHaveAttribute(
-    "open",
-    "",
-  );
+  await expect(page.locator(".expanded-guide-results")).toHaveCount(0);
   await page.screenshot({
     path: "data/guidance-r3-question-mobile.png",
     fullPage: true,
@@ -289,7 +511,7 @@ test("明确开启AI后仍在当前页，失败保留回答并可切回基础；
     route.fulfill({ json: { ...me, aiConfigured: true } }),
   );
   await page.getByRole("button", { name: "刷新内容", exact: true }).click();
-  await page.route("**/api/guidance/*/ai", (route) =>
+  await page.route("**/api/guidance/*/ai?compact=1", (route) =>
     route.fulfill({
       status: 502,
       json: { error: "测试AI超时，请使用基础引导" },
@@ -304,11 +526,18 @@ test("明确开启AI后仍在当前页，失败保留回答并可切回基础；
   ).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await respond(page, "想结识新朋友");
-  await page.getByText("本次AI输入范围", { exact: true }).click();
-  await expect(page.locator(".scope-disclosure")).not.toContainText(
-    "这段不可以默认发送",
-  );
-  await expect(page.locator(".scope-disclosure")).toContainText("想结识新朋友");
+  await page.getByRole("button", { name: "使用范围", exact: true }).click();
+  await expect(
+    page.getByRole("dialog", { name: "使用范围", exact: true }),
+  ).not.toContainText("这段不可以默认发送");
+  await page
+    .getByRole("dialog", { name: "使用范围", exact: true })
+    .getByText(/第1轮/)
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "使用范围", exact: true }),
+  ).toContainText("想结识新朋友");
+  await page.keyboard.press("Escape");
   const roots = await (await page.request.get("/api/entities")).json();
   const root = roots.find(
     (e: { data: { content: string } }) => e.data.content === sample,
@@ -349,8 +578,8 @@ test("明确开启AI后仍在当前页，失败保留回答并可切回基础；
       ],
     },
   };
-  await page.unroute("**/api/guidance/*/ai");
-  await page.route("**/api/guidance/*/ai", (route) =>
+  await page.unroute("**/api/guidance/*/ai?compact=1");
+  await page.route("**/api/guidance/*/ai?compact=1", (route) =>
     route.fulfill({ json: { session: next, stale: false } }),
   );
   await page.getByRole("button", { name: "开启AI追问", exact: true }).click();

@@ -5,11 +5,13 @@ import {
   questionSchema,
   presets,
 } from "./guidance-schema";
+import { AnswerFormat, usableAnswerFormat } from "./guide-experience";
 export const scenarios = {
   general: "通用梳理",
   decision: "在几个选项间决定",
   project: "小项目是否值得做",
   reflection: "理解一次结果或失败",
+  purchase: "考虑一次购买",
 } as const;
 export const strategyLabels = {
   concrete: "具体化",
@@ -45,8 +47,94 @@ type Step = {
   focus: string;
   text: string;
   requires?: string[];
+  input?: AnswerFormat;
+  explanation?: string;
 };
 const steps: Record<Scenario, Step[]> = {
+  purchase: [
+    {
+      key: "goal",
+      direction: "goal",
+      focus: "购买想带来的体验",
+      text: "你最想从这次购买中得到什么？",
+    },
+    {
+      key: "context",
+      direction: "goal",
+      focus: "真实的使用场景",
+      text: "你想到的使用场景是什么？",
+      requires: ["goal"],
+    },
+    {
+      key: "opportunity",
+      direction: "basis",
+      focus: "近期的使用机会",
+      text: "近期有确定的使用机会吗？",
+      requires: ["context"],
+      explanation:
+        "先分清确定的安排和想象中的场景，再考虑适用性与代价；没有近期用途也不等于不值得买。",
+      input: {
+        kind: "single",
+        options: [
+          { id: "yes", label: "有，已经有明确安排" },
+          { id: "possible", label: "有可能，但还没确定" },
+          { id: "no", label: "暂时没有" },
+        ],
+      },
+    },
+    {
+      key: "fit",
+      direction: "basis",
+      focus: "是否适合实际场景",
+      text: "它符合那次使用的需要吗？",
+      requires: ["opportunity"],
+      input: {
+        kind: "single",
+        options: [
+          { id: "yes", label: "已有信息表明适合" },
+          { id: "check", label: "还需要核对" },
+          { id: "no", label: "有不适合的地方" },
+        ],
+      },
+    },
+    {
+      key: "tradeoff",
+      direction: "concern",
+      focus: "为拥有它愿意付出的代价",
+      text: "即使暂时用不上，你愿意为拥有它付出什么？",
+      requires: ["context"],
+    },
+    {
+      key: "budget",
+      direction: "concern",
+      focus: "可接受的支出与取舍",
+      text: "这次支出在你愿意承担的范围内吗？",
+      requires: ["context"],
+      input: {
+        kind: "single",
+        options: [
+          { id: "yes", label: "在我愿意承担的范围内" },
+          { id: "check", label: "还需要核对价格或预算" },
+          { id: "no", label: "超出目前愿意付出的代价" },
+        ],
+      },
+    },
+    {
+      key: "choice",
+      direction: "judgment",
+      focus: "带着条件作出的当前倾向",
+      text: "结合喜欢、用途和代价，你现在更倾向什么？",
+      requires: ["context"],
+      input: {
+        kind: "compare",
+        options: [
+          { id: "buy", label: "现在购买" },
+          { id: "wait", label: "暂缓决定" },
+          { id: "alternative", label: "考虑替代选择" },
+        ],
+      },
+    },
+  ],
   general: [
     {
       key: "goal",
@@ -91,6 +179,15 @@ const steps: Record<Scenario, Step[]> = {
       direction: "goal",
       focus: "选择时最重视的东西",
       text: "比较这些选择时，你最不愿意牺牲的是什么？",
+      input: {
+        kind: "multiple",
+        options: [
+          { id: "experience", label: "体验与个人偏好" },
+          { id: "time", label: "时间与精力" },
+          { id: "resources", label: "费用与资源" },
+          { id: "others", label: "对他人的影响" },
+        ],
+      },
       requires: ["options"],
     },
     {
@@ -231,6 +328,14 @@ export function ruleQuestion(
     sourceAnswerIds,
     targetId,
     prerequisites: step.requires || [],
+    explanation:
+      step.explanation || `这次先澄清${step.focus}，再决定还需要确认什么。`,
+    input: usableAnswerFormat(
+      step.input ||
+        (step.direction === "unknown"
+          ? { kind: "unknown", options: [] }
+          : { kind: "text", options: [] }),
+    ),
   });
 }
 export function strategyQuestion(q: GuideData["current"], strategy: Strategy) {
@@ -313,6 +418,25 @@ export function nextRule(s: GuideSession, id: string) {
     return next;
   }
   if (q.itemKey.startsWith("verify:")) return null;
+  if (s.data.scenario === "purchase") {
+    const selected = last.response?.selected || [];
+    let key: string | undefined;
+    if (
+      last.status === "unknown" &&
+      ["opportunity", "budget", "fit"].includes(q.itemKey)
+    )
+      return null;
+    if (q.itemKey === "opportunity")
+      key = selected.includes("yes") ? "fit" : "tradeoff";
+    if (q.itemKey === "fit" || q.itemKey === "tradeoff") key = "budget";
+    if (q.itemKey === "budget") key = "choice";
+    if (q.itemKey === "choice") return null;
+    if (key) {
+      const step = steps.purchase.find((n) => n.key === key)!;
+      return ruleQuestion(step, id, source);
+    }
+  }
+
   if (a === "external" || a === "inferred") {
     return ruleQuestion(
       {
@@ -428,4 +552,8 @@ export function reenterScenario(s: GuideSession, id: string) {
     );
   }
   return null;
+}
+
+export function scenarioStep(scenario: Scenario, key: string) {
+  return steps[scenario].find((step) => step.key === key);
 }

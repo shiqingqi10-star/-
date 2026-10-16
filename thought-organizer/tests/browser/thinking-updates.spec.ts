@@ -24,12 +24,25 @@ async function start(
   );
 }
 async function scene(page: Page, label: string) {
+  await page
+    .getByRole("button", { name: "更多操作：梳理", exact: true })
+    .click();
+  await page.getByRole("menuitem", { name: "调整引导", exact: true }).click();
   await page.getByText("换一个适合这件事的引导", { exact: true }).click();
   await page.getByRole("button", { name: label, exact: true }).click();
+  await expect(
+    page.getByRole("dialog", { name: "调整引导", exact: true }),
+  ).toContainText("当前为");
+  await page.keyboard.press("Escape");
 }
 async function choose(page: Page, assessment: string) {
+  await page
+    .getByRole("button", { name: "更多操作：梳理", exact: true })
+    .click();
+  await page.getByRole("menuitem", { name: "调整引导", exact: true }).click();
   await page.getByText("这条回答怎样看（可选）", { exact: true }).click();
   await page.getByLabel("回答的情况", { exact: true }).selectOption(assessment);
+  await page.keyboard.press("Escape");
 }
 async function selectRef(page: Page, label: string, title: string) {
   await page.getByLabel(label, { exact: true }).fill(title);
@@ -48,6 +61,7 @@ test("换策略不循环且保留回答，切场景暂存恢复，外部未知�
     .getByLabel("你的回答", { exact: true })
     .fill("还没有提交，但不能丢失的思考。");
   const seen = new Set<string>();
+  await page.getByText("想不出来？", { exact: true }).click();
   for (let i = 0; i < 9; i++) {
     await page.getByRole("button", { name: "换个问法", exact: true }).click();
     await expect(page.locator(".question-caption")).toBeVisible();
@@ -70,16 +84,21 @@ test("换策略不循环且保留回答，切场景暂存恢复，外部未知�
   await expect(page.locator(".current-question h2")).toHaveText(
     "谁会在什么情况下需要这个小工具？",
   );
+  await page
+    .getByRole("button", { name: "更多操作：梳理", exact: true })
+    .click();
+  await page.getByRole("menuitem", { name: "调整引导", exact: true }).click();
   await page.getByText("暂存的回答", { exact: true }).click();
   await expect(page.locator(".parked-answers")).toContainText(
     "还没有提交，但不能丢失的思考。",
   );
-  await page.getByText("这题卡在哪里？", { exact: true }).click();
+  await page.keyboard.press("Escape");
+  await page.getByText("想不出来？", { exact: true }).click();
   await page.getByRole("button", { name: "我缺少信息", exact: true }).click();
   await expect(page.locator(".current-question h2")).toHaveText(
     "可以向谁了解，或用什么方式确认这条信息？",
   );
-  await expect(page.locator(".external-gap")).toContainText("没有自动补出答案");
+  await expect(page.getByLabel("目前的线索")).toContainText("未知");
   await page.getByRole("button", { name: "暂时不知道", exact: true }).click();
   await expect(page.locator(".current-question h2")).toContainText(
     "看看目前理清了什么",
@@ -126,7 +145,7 @@ test("从推测到访谈结果再更新原判断，依据历史回接，重复�
   await page.getByLabel("你的回答", { exact: true }).fill("访谈三位潜在使用者");
   await page.getByRole("button", { name: "继续", exact: true }).click();
   await page
-    .getByRole("button", { name: "看看目前理清了什么", exact: true })
+    .getByRole("button", { name: "查看成果", exact: true })
     .first()
     .click();
   await page.getByRole("button", { name: "确认整理结果", exact: true }).click();
@@ -235,6 +254,7 @@ test("从推测到访谈结果再更新原判断，依据历史回接，重复�
     fullPage: true,
   });
   await page.reload();
+  await page.getByRole("button", { name: "查看成果", exact: true }).click();
   await page.locator(".living-judgments > summary").click();
   await expect(page.locator(".living-judgments")).toContainText("暂缓收费工具");
   await expect(page.locator(".living-judgments")).toContainText("加入了新材料");
@@ -254,31 +274,29 @@ test("三种场景无AI可选、保存失败保留更新草稿、冲突不覆盖
   await expect(page.locator(".current-question h2")).toHaveText(
     "比较这些选择时，你最不愿意牺牲的是什么？",
   );
-  if ((await page.locator(".scenario-picker").getAttribute("open")) === null)
-    await page.locator(".scenario-picker summary").click();
-  await page
-    .getByRole("button", { name: "理解一次结果或失败", exact: true })
-    .click();
+  await scene(page, "理解一次结果或失败");
   await expect(page.locator(".current-question h2")).toHaveText(
     "在结果发生之前，你原本期待什么？",
   );
+  await page.getByRole("button", { name: "查看成果", exact: true }).click();
   await page.getByRole("button", { name: "我改变想法了", exact: true }).click();
   const form = page.getByRole("dialog", { name: "我改变想法了", exact: true });
   await form
     .getByRole("textbox", { name: "我现在怎么想", exact: true })
     .fill("这段看法保存失败也不能丢");
-  await page.route("**/api/guidance/*/updates", (route) =>
+  await page.route("**/api/guidance/*/updates?compact=1", (route) =>
     route.fulfill({ status: 500, body: "" }),
   );
   await form.getByRole("button", { name: "保存", exact: true }).click();
   await expect(form.locator("[role=alert]")).toContainText("草稿仍保留");
   await page.keyboard.press("Escape");
   await page.reload();
+  await page.getByRole("button", { name: "查看成果", exact: true }).click();
   await page.getByRole("button", { name: "我改变想法了", exact: true }).click();
   await expect(
     form.getByRole("textbox", { name: "我现在怎么想", exact: true }),
   ).toHaveValue("这段看法保存失败也不能丢");
-  await page.unroute("**/api/guidance/*/updates");
+  await page.unroute("**/api/guidance/*/updates?compact=1");
   await form.getByRole("button", { name: "保存", exact: true }).click();
   await expect(form).toHaveCount(0);
   await page.locator(".living-judgments > summary").click();

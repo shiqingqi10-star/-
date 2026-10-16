@@ -46,6 +46,12 @@ import {
   databaseDiagnostic,
 } from "@/lib/db";
 import { updateThinking } from "@/lib/thinking-updates";
+import {
+  compactGuide,
+  guideRunRecords,
+  guideInputScope,
+} from "@/lib/guide-records";
+import { GuideSession } from "@/lib/guidance-schema";
 import { Kind, fail, AppError, kinds } from "@/lib/schema";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -173,21 +179,46 @@ async function handle(
       );
     }
     if (route === "guidance") {
+      const present = (s: GuideSession) =>
+        req.nextUrl.searchParams.get("compact") === "1" ? compactGuide(s) : s;
       if (!id && req.method === "POST")
         return reply(startGuide(user.id, b), 201);
+      if (id && req.method === "GET" && action === "runs")
+        return reply(
+          guideRunRecords(
+            user.id,
+            id,
+            req.nextUrl.searchParams.get("id"),
+            req.nextUrl.searchParams.get("cursor"),
+          ),
+        );
+      if (id && req.method === "GET" && action === "scope")
+        return reply(guideInputScope(user.id, id));
       if (id && req.method === "GET")
         return reply(
           action === "history"
             ? guideHistory(user.id, id)
-            : getGuide(user.id, id),
+            : present(
+                getGuide(
+                  user.id,
+                  id,
+                  req.nextUrl.searchParams.get("compact") !== "1",
+                ),
+              ),
         );
       if (id && req.method === "POST") {
-        if (action === "updates") return reply(updateThinking(user.id, id, b));
-        if (action === "ai") return reply(await generateGuide(user.id, id, b));
-        return reply(initializeGuide(user.id, id));
+        if (action === "updates") {
+          const r = updateThinking(user.id, id, b);
+          return reply({ ...r, session: present(r.session) });
+        }
+        if (action === "ai") {
+          const r = await generateGuide(user.id, id, b);
+          return reply({ ...r, session: present(r.session) });
+        }
+        return reply(present(initializeGuide(user.id, id)));
       }
       if (id && req.method === "PATCH")
-        return reply(mutateGuide(user.id, id, b));
+        return reply(present(mutateGuide(user.id, id, b)));
     }
     if (route === "entities") {
       if (req.method === "GET") {

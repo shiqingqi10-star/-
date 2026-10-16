@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useImperativeHandle, Ref } from "react";
 import { z } from "zod";
 import { Entity } from "@/lib/schema";
 import { GuideSession } from "@/lib/guidance-schema";
@@ -45,7 +45,13 @@ export default function ThinkingUpdates({
   onFocus,
   onHistory,
   onOpen,
+  compact = false,
+  controller,
 }: {
+  compact?: boolean;
+  controller?: Ref<{
+    open: (kind: "information" | "judgment" | "result") => void;
+  }>;
   root: Entity;
   rows: Entity[];
   items: Entity[];
@@ -122,6 +128,7 @@ export default function ThinkingUpdates({
     setError("");
     setDraftState(restored ? "已恢复本地草稿 · 尚未保存" : "正在编辑");
   }
+  useImperativeHandle(controller, () => ({ open }));
   useEffect(() => {
     if (!form) return;
     try {
@@ -222,266 +229,276 @@ export default function ThinkingUpdates({
     : [];
   return (
     <section className="thinking-updates" aria-label="更新这个思考">
-      <div className="thinking-update-entries">
-        <button disabled={busy} onClick={() => open("information")}>
-          我有新信息
-        </button>
-        <button disabled={busy} onClick={() => open("judgment")}>
-          我改变想法了
-        </button>
-        <button disabled={busy} onClick={() => open("result")}>
-          我做完这一步了
-        </button>
-      </div>
-      {!!judgments.length && (
-        <details className="living-judgments">
-          <summary>
-            我现在怎么看 · {judgments.length} 条
-            {session.data.judgments.some((j) => j.needsReview)
-              ? " · 有内容需核对"
-              : ""}
-          </summary>
-          {judgments.map((e) => {
-            const meta = session.data.judgments.find(
-                (j) => j.entityId === e.id,
-              ),
-              candidate = session.data.candidates.find(
-                (c) => c.target === e.id,
-              );
-            const impacts = session.data.impacts.filter(
-                (i) => i.entityId === e.id,
-              ),
-              pending = impacts.filter(
-                (i) =>
-                  !i.resolved &&
-                  ["pending", "adjust", "uncertain"].includes(i.status),
-              );
-            const evidenceIds = [
-              ...new Set([
-                ...(meta?.evidenceRefs || []),
-                ...((e.data.evidenceRefs as string[]) || []),
-                ...impacts.flatMap(
-                  (i) =>
-                    session.data.updates.find((u) => u.id === i.updateId)
-                      ?.evidenceRefs || [],
-                ),
-              ]),
-            ];
-            return (
-              <article className="living-judgment" key={e.id}>
-                <strong>当前看法</strong>
-                <p className="full-body">{judgmentText(e)}</p>
-                <small className="muted">
-                  {e.kind === "card"
-                    ? `${e.data.type || "个人观点"} · ${e.data.verification || "未核实"}`
-                    : "用户当前判断"}
-                  {e.data.source === "AI推断" || candidate?.source === "ai"
-                    ? " · 来源于已确认的AI建议"
-                    : ""}
-                </small>
-                {(meta?.needsReview || (!meta && candidate?.stale)) && (
-                  <p className="warning-text">
-                    相关内容变化，需重新核对。原判断保留，没有自动改写。
-                  </p>
-                )}
-                <details>
-                  <summary>依据、条件与来源</summary>
-                  {!!(meta?.why || e.data.reason) && (
-                    <p className="full-body">
-                      为什么这样想：{meta?.why || String(e.data.reason)}
-                    </p>
-                  )}
-                  {meta?.uncertain && (
-                    <p className="full-body">还不确定：{meta.uncertain}</p>
-                  )}
-                  {!!(meta?.conditions || e.data.reevaluate) && (
-                    <p className="full-body">
-                      适用条件：{meta?.conditions || String(e.data.reevaluate)}
-                    </p>
-                  )}
-                  {meta?.method && (
-                    <p className="full-body">确认方法：{meta.method}</p>
-                  )}
-                  {evidenceIds.map((id) => {
-                    const material = items.find((x) => x.id === id);
-                    return material ? (
-                      <button
-                        className="existing-guide-item"
-                        key={id}
-                        onClick={() => onOpen(material)}
-                      >
-                        {entityName(material)}
-                        {material.deletedAt ? " · 已在回收站" : ""}
-                      </button>
-                    ) : (
-                      <p key={id} className="muted">
-                        一条关联材料暂时不可用，可从完整记录核对。
-                      </p>
-                    );
-                  })}
-                  {(candidate?.answerSnapshots || []).map((a) => (
-                    <p className="full-body" key={a.id}>
-                      {a.question.text}
-                      <br />
-                      {a.text || "暂时不知道"}
-                      <small className="muted">
-                        采纳时的原回答 · 版本 {a.version}
-                      </small>
-                    </p>
-                  ))}
-                  {!evidenceIds.length &&
-                    !candidate?.answerSnapshots.length &&
-                    !meta?.why &&
-                    !e.data.reason && (
-                      <p className="muted">
-                        目前没有补充来源；可以保留看法，按需增加依据。
-                      </p>
-                    )}
-                </details>
-                {impacts.map((i) => (
-                  <div className="judgment-impact" key={i.id}>
-                    <p>{i.reason}</p>
-                    <small>
-                      {i.resolved ? "已随核对或判断更新处理 · " : ""}
-                      {
-                        {
-                          supports: "支持信息",
-                          opposes: "反对信息",
-                          related: "相关信息，影响待核对",
-                        }[i.stance]
-                      }{" "}
-                      ·
-                      {
-                        {
-                          pending: "等待你核对",
-                          still: "你认为仍然适用",
-                          adjust: "你认为需要调整",
-                          uncertain: "你暂时无法判断",
-                        }[i.status]
-                      }
-                      {i.comment && " · " + i.comment}
+      {!compact && (
+        <>
+          <div className="thinking-update-entries">
+            <button disabled={busy} onClick={() => open("information")}>
+              我有新信息
+            </button>
+            <button disabled={busy} onClick={() => open("judgment")}>
+              我改变想法了
+            </button>
+            <button disabled={busy} onClick={() => open("result")}>
+              我做完这一步了
+            </button>
+          </div>
+          {!!judgments.length && (
+            <details className="living-judgments">
+              <summary>
+                我现在怎么看 · {judgments.length} 条
+                {session.data.judgments.some((j) => j.needsReview)
+                  ? " · 有内容需核对"
+                  : ""}
+              </summary>
+              {judgments.map((e) => {
+                const meta = session.data.judgments.find(
+                    (j) => j.entityId === e.id,
+                  ),
+                  candidate = session.data.candidates.find(
+                    (c) => c.target === e.id,
+                  );
+                const impacts = session.data.impacts.filter(
+                    (i) => i.entityId === e.id,
+                  ),
+                  pending = impacts.filter(
+                    (i) =>
+                      !i.resolved &&
+                      ["pending", "adjust", "uncertain"].includes(i.status),
+                  );
+                const evidenceIds = [
+                  ...new Set([
+                    ...(meta?.evidenceRefs || []),
+                    ...((e.data.evidenceRefs as string[]) || []),
+                    ...impacts.flatMap(
+                      (i) =>
+                        session.data.updates.find((u) => u.id === i.updateId)
+                          ?.evidenceRefs || [],
+                    ),
+                  ]),
+                ];
+                return (
+                  <article className="living-judgment" key={e.id}>
+                    <strong>当前看法</strong>
+                    <p className="full-body">{judgmentText(e)}</p>
+                    <small className="muted">
+                      {e.kind === "card"
+                        ? `${e.data.type || "个人观点"} · ${e.data.verification || "未核实"}`
+                        : "用户当前判断"}
+                      {e.data.source === "AI推断" || candidate?.source === "ai"
+                        ? " · 来源于已确认的AI建议"
+                        : ""}
                     </small>
-                    {pending.some((p) => p.id === i.id) && (
-                      <div className="bar">
-                        {(
-                          [
-                            ["still", "仍然适用"],
-                            ["adjust", "需要调整"],
-                            ["uncertain", "暂时无法判断"],
-                          ] as const
-                        ).map(([status, label]) => (
-                          <button
-                            disabled={busy}
-                            key={status}
-                            onClick={() =>
-                              void onSave({
-                                action: "check",
-                                version: session.version,
-                                token: requestToken(),
-                                impactId: i.id,
-                                status,
-                                comment: "",
-                              })
-                            }
-                          >
-                            {label}
-                          </button>
-                        ))}
-                      </div>
+                    {(meta?.needsReview || (!meta && candidate?.stale)) && (
+                      <p className="warning-text">
+                        相关内容变化，需重新核对。原判断保留，没有自动改写。
+                      </p>
                     )}
-                  </div>
+                    <details>
+                      <summary>依据、条件与来源</summary>
+                      {!!(meta?.why || e.data.reason) && (
+                        <p className="full-body">
+                          为什么这样想：{meta?.why || String(e.data.reason)}
+                        </p>
+                      )}
+                      {meta?.uncertain && (
+                        <p className="full-body">还不确定：{meta.uncertain}</p>
+                      )}
+                      {!!(meta?.conditions || e.data.reevaluate) && (
+                        <p className="full-body">
+                          适用条件：
+                          {meta?.conditions || String(e.data.reevaluate)}
+                        </p>
+                      )}
+                      {meta?.method && (
+                        <p className="full-body">确认方法：{meta.method}</p>
+                      )}
+                      {evidenceIds.map((id) => {
+                        const material = items.find((x) => x.id === id);
+                        return material ? (
+                          <button
+                            className="existing-guide-item"
+                            key={id}
+                            onClick={() => onOpen(material)}
+                          >
+                            {entityName(material)}
+                            {material.deletedAt ? " · 已在回收站" : ""}
+                          </button>
+                        ) : (
+                          <p key={id} className="muted">
+                            一条关联材料暂时不可用，可从完整记录核对。
+                          </p>
+                        );
+                      })}
+                      {(candidate?.answerSnapshots || []).map((a) => (
+                        <p className="full-body" key={a.id}>
+                          {a.question.text}
+                          <br />
+                          {a.text || "暂时不知道"}
+                          <small className="muted">
+                            采纳时的原回答 · 版本 {a.version}
+                          </small>
+                        </p>
+                      ))}
+                      {!evidenceIds.length &&
+                        !candidate?.answerSnapshots.length &&
+                        !meta?.why &&
+                        !e.data.reason && (
+                          <p className="muted">
+                            目前没有补充来源；可以保留看法，按需增加依据。
+                          </p>
+                        )}
+                    </details>
+                    {impacts.map((i) => (
+                      <div className="judgment-impact" key={i.id}>
+                        <p>{i.reason}</p>
+                        <small>
+                          {i.resolved ? "已随核对或判断更新处理 · " : ""}
+                          {
+                            {
+                              supports: "支持信息",
+                              opposes: "反对信息",
+                              related: "相关信息，影响待核对",
+                            }[i.stance]
+                          }{" "}
+                          ·
+                          {
+                            {
+                              pending: "等待你核对",
+                              still: "你认为仍然适用",
+                              adjust: "你认为需要调整",
+                              uncertain: "你暂时无法判断",
+                            }[i.status]
+                          }
+                          {i.comment && " · " + i.comment}
+                        </small>
+                        {pending.some((p) => p.id === i.id) && (
+                          <div className="bar">
+                            {(
+                              [
+                                ["still", "仍然适用"],
+                                ["adjust", "需要调整"],
+                                ["uncertain", "暂时无法判断"],
+                              ] as const
+                            ).map(([status, label]) => (
+                              <button
+                                disabled={busy}
+                                key={status}
+                                onClick={() =>
+                                  void onSave({
+                                    action: "check",
+                                    version: session.version,
+                                    token: requestToken(),
+                                    impactId: i.id,
+                                    status,
+                                    comment: "",
+                                  })
+                                }
+                              >
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    <div className="bar">
+                      <button
+                        className="text-button"
+                        disabled={busy}
+                        onClick={() => open("judgment", e)}
+                      >
+                        修改这条看法
+                      </button>
+                      <button
+                        className="text-button"
+                        disabled={busy}
+                        onClick={() => open("information", e)}
+                      >
+                        补充支持或反对信息
+                      </button>
+                      <button
+                        className="text-button"
+                        disabled={busy}
+                        onClick={() => onFocus(e.id)}
+                      >
+                        围绕这一条继续追问
+                      </button>
+                      <button
+                        className="text-button"
+                        onClick={() => setHistory(e.id)}
+                      >
+                        看法变化
+                      </button>
+                      <button
+                        className="text-button"
+                        onClick={() => onHistory(e)}
+                      >
+                        完整历史
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </details>
+          )}
+          {!!session.data.updates.length && (
+            <details className="thinking-update-history">
+              <summary>新信息与行动结果</summary>
+              {session.data.updates
+                .slice()
+                .reverse()
+                .map((u) => (
+                  <article key={u.id}>
+                    <small className="muted">
+                      {
+                        {
+                          information: "新信息",
+                          judgment: "看法更新",
+                          result: "行动结果",
+                          check: "用户核对",
+                        }[u.kind]
+                      }{" "}
+                      · {readableTime(u.createdAt, zone)}
+                    </small>
+                    {u.taskId && (
+                      <p>
+                        {(items.find((e) => e.id === u.taskId)?.data
+                          .title as string) || "原行动"}
+                      </p>
+                    )}
+                    <p className="full-body">
+                      {u.text || "已完成行动，尚未补充结果。"}
+                    </p>
+                    {u.reason && u.reason !== u.text && (
+                      <p className="full-body">我的解释：{u.reason}</p>
+                    )}
+                    {u.before.map((b) => (
+                      <details key={b.entityId}>
+                        <summary>
+                          之前的看法 ·{" "}
+                          {items.find((e) => e.id === b.entityId)
+                            ? entityName(
+                                items.find((e) => e.id === b.entityId)!,
+                              )
+                            : "相关判断"}
+                        </summary>
+                        <p className="full-body">{b.text}</p>
+                      </details>
+                    ))}
+                    {u.kind === "result" && u.targets[0] && (
+                      <button
+                        className="text-button"
+                        disabled={busy}
+                        onClick={() => onFocus(u.targets[0], "update")}
+                      >
+                        带着结果继续核对原判断
+                      </button>
+                    )}
+                  </article>
                 ))}
-                <div className="bar">
-                  <button
-                    className="text-button"
-                    disabled={busy}
-                    onClick={() => open("judgment", e)}
-                  >
-                    修改这条看法
-                  </button>
-                  <button
-                    className="text-button"
-                    disabled={busy}
-                    onClick={() => open("information", e)}
-                  >
-                    补充支持或反对信息
-                  </button>
-                  <button
-                    className="text-button"
-                    disabled={busy}
-                    onClick={() => onFocus(e.id)}
-                  >
-                    围绕这一条继续追问
-                  </button>
-                  <button
-                    className="text-button"
-                    onClick={() => setHistory(e.id)}
-                  >
-                    看法变化
-                  </button>
-                  <button className="text-button" onClick={() => onHistory(e)}>
-                    完整历史
-                  </button>
-                </div>
-              </article>
-            );
-          })}
-        </details>
-      )}
-      {!!session.data.updates.length && (
-        <details className="thinking-update-history">
-          <summary>新信息与行动结果</summary>
-          {session.data.updates
-            .slice()
-            .reverse()
-            .map((u) => (
-              <article key={u.id}>
-                <small className="muted">
-                  {
-                    {
-                      information: "新信息",
-                      judgment: "看法更新",
-                      result: "行动结果",
-                      check: "用户核对",
-                    }[u.kind]
-                  }{" "}
-                  · {readableTime(u.createdAt, zone)}
-                </small>
-                {u.taskId && (
-                  <p>
-                    {(items.find((e) => e.id === u.taskId)?.data
-                      .title as string) || "原行动"}
-                  </p>
-                )}
-                <p className="full-body">
-                  {u.text || "已完成行动，尚未补充结果。"}
-                </p>
-                {u.reason && u.reason !== u.text && (
-                  <p className="full-body">我的解释：{u.reason}</p>
-                )}
-                {u.before.map((b) => (
-                  <details key={b.entityId}>
-                    <summary>
-                      之前的看法 ·{" "}
-                      {items.find((e) => e.id === b.entityId)
-                        ? entityName(items.find((e) => e.id === b.entityId)!)
-                        : "相关判断"}
-                    </summary>
-                    <p className="full-body">{b.text}</p>
-                  </details>
-                ))}
-                {u.kind === "result" && u.targets[0] && (
-                  <button
-                    className="text-button"
-                    disabled={busy}
-                    onClick={() => onFocus(u.targets[0], "update")}
-                  >
-                    带着结果继续核对原判断
-                  </button>
-                )}
-              </article>
-            ))}
-        </details>
+            </details>
+          )}
+        </>
       )}
       {form && (
         <Modal title={title[form.kind]} onClose={() => setForm(null)}>
